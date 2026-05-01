@@ -36,8 +36,11 @@ class TempReading(Base):
     temperature = Column(Float)
     spo2        = Column(Float,   nullable=True)
     bpm         = Column(Integer, nullable=True)
+    systolic    = Column(Integer, nullable=True)   # mmHg
+    diastolic   = Column(Integer, nullable=True)   # mmHg
     spo2_valid  = Column(Boolean, default=False)
     bpm_valid   = Column(Boolean, default=False)
+    bp_valid    = Column(Boolean, default=False)
     timestamp   = Column(DateTime, default=datetime.utcnow)
     patient     = relationship("Patient", back_populates="readings")
 
@@ -75,8 +78,11 @@ class TempReadingIn(BaseModel):
     temperature: float
     spo2:        Optional[float]    = None
     bpm:         Optional[int]      = None
+    systolic:    Optional[int]      = None   # blood pressure mmHg
+    diastolic:   Optional[int]      = None   # blood pressure mmHg
     spo2_valid:  Optional[bool]     = False
     bpm_valid:   Optional[bool]     = False
+    bp_valid:    Optional[bool]     = False
     timestamp:   Optional[datetime] = None
 
 
@@ -85,8 +91,11 @@ class TempReadingOut(BaseModel):
     temperature: float
     spo2:        Optional[float]
     bpm:         Optional[int]
+    systolic:    Optional[int]
+    diastolic:   Optional[int]
     spo2_valid:  bool
     bpm_valid:   bool
+    bp_valid:    bool
     timestamp:   datetime
     class Config: orm_mode = True
 
