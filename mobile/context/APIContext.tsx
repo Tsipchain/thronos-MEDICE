@@ -9,6 +9,7 @@ export function APIProvider({ children }: { children: React.ReactNode }) {
   const [guardian,     setGuardian]    = useState<any>(null);
   const [patient,      setPatient]     = useState<any>(null);
   const [feverHistory, setFeverHistory] = useState<any[]>([]);
+  const [lastBpLevel,  setLastBpLevel] = useState<string>("normal");
 
   useEffect(() => {
     (async () => {
@@ -29,12 +30,15 @@ export function APIProvider({ children }: { children: React.ReactNode }) {
   };
 
   const postReading = async (data: {
-    patient_id: string;
+    patient_id:  string;
     temperature: number;
-    spo2?: number;
-    bpm?: number;
+    spo2?:       number;
+    bpm?:        number;
+    systolic?:   number;
+    diastolic?:  number;
     spo2_valid?: boolean;
-    bpm_valid?: boolean;
+    bpm_valid?:  boolean;
+    bp_valid?:   boolean;
   }) => {
     try {
       const res = await axios.post(`${apiUrl}/readings`, {
@@ -44,6 +48,8 @@ export function APIProvider({ children }: { children: React.ReactNode }) {
       });
       if (res.data?.active_fever_id !== undefined)
         setPatient((p: any) => ({ ...p, active_fever_id: res.data.active_fever_id }));
+      if (res.data?.bp_level)
+        setLastBpLevel(res.data.bp_level);
     } catch (e) { console.warn("postReading:", e); }
   };
 
@@ -61,7 +67,8 @@ export function APIProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <APIContext.Provider value={{
-      apiUrl, setApiUrl, guardian, patient, feverHistory, postReading, postAntipyretic,
+      apiUrl, setApiUrl, guardian, patient, feverHistory,
+      lastBpLevel, postReading, postAntipyretic,
     }}>
       {children}
     </APIContext.Provider>
