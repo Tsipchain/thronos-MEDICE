@@ -1,0 +1,25 @@
+# Railway v3 - ThronomedICE API Service
+
+[build]
+builder        = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand           = "uvicorn main:app --host 0.0.0.0 --port $PORT --workers 8 --loop uvloop"
+healthcheckPath        = "/health"
+healthcheckTimeout     = 30
+restartPolicyType      = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+numReplicas            = 3
+
+# Set these in the Railway dashboard (never commit secrets):
+# DATABASE_URL             = ${{Postgres.DATABASE_URL}}
+# REDIS_URL                = ${{Redis.REDIS_URL}}
+# THRONOS_RPC_URL          = https://your-thronos-node
+# MEDICE_PRIVATE_KEY       = 0x...
+# FEVER_CONTRACT_ADDRESS   = 0x...
+# NODE_REWARD_POOL_ADDRESS = 0x...
+# FCM_SERVER_KEY           = ...
+# HOSPITAL_API_KEY         = ...
+# NODE_ID                  = medice-api-railway-$RAILWAY_REPLICA_ID
+# NODE_TYPE                = api_node_medice
