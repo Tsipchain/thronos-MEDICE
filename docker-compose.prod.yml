@@ -1,0 +1,135 @@
+version: "3.9"
+
+# Production stack: nginx + api (3 replicas) + redis + timescaledb
+# Usage: docker-compose -f docker-compose.prod.yml up -d --scale api=3
+
+services:
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - medice_net
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 512M
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: >-
+      uvicorn main:app
+      --host 0.0.0.0
+      --port 8000
+      --workers 8
+      --loop uvloop
+      --log-level info
+    environment:
+      DATABASE_URL:           postgresql://medice:${DB_PASSWORD}@timescaledb:5432/medicedb
+      REDIS_URL:              redis://redis:6379/0
+      THRONOS_RPC_URL:        ${THRONOS_RPC_URL}
+      MEDICE_PRIVATE_KEY:     ${MEDICE_PRIVATE_KEY}
+      FEVER_CONTRACT_ADDRESS: ${FEVER_CONTRACT_ADDRESS}
+      FCM_SERVER_KEY:         ${FCM_SERVER_KEY}
+      HOSPITAL_API_KEY:       ${HOSPITAL_API_KEY}
+      NODE_ID:                ${NODE_ID:-medice-api-prod}
+      NODE_TYPE:              api_node_medice
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - medice_net
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: "6"
+          memory: 4G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    command: >
+      redis-server
+      --maxmemory 2gb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --appendonly yes
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - medice_net
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2.5G
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    environment:
+      POSTGRES_USER:     medice
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB:       medicedb
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./timescale_init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    restart: unless-stopped
+    networks:
+      - medice_net
+    deploy:
+      resources:
+        limits:
+          cpus: "8"
+          memory: 14G
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medice -d medicedb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    command: >
+      postgres
+      -c shared_buffers=4GB
+      -c effective_cache_size=10GB
+      -c work_mem=64MB
+      -c maintenance_work_mem=512MB
+      -c max_connections=200
+      -c wal_buffers=64MB
+      -c checkpoint_completion_target=0.9
+      -c random_page_cost=1.1
+
+networks:
+  medice_net:
+    driver: bridge
+
+volumes:
+  timescale_data:
+  redis_data:
