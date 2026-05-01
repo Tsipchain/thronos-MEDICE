@@ -9,6 +9,7 @@ export function APIProvider({ children }: { children: React.ReactNode }) {
   const [guardian,     setGuardian]    = useState<any>(null);
   const [patient,      setPatient]     = useState<any>(null);
   const [feverHistory, setFeverHistory] = useState<any[]>([]);
+  const [lastBpLevel,  setLastBpLevel] = useState<string>("normal");
 
   useEffect(() => {
     (async () => {
@@ -28,13 +29,38 @@ export function APIProvider({ children }: { children: React.ReactNode }) {
     await AsyncStorage.setItem("medice_api_url", url);
   };
 
+  const createGuardian = async (name: string, email: string): Promise<number> => {
+    const res = await axios.post(`${apiUrl}/guardians`, { name, email });
+    const g   = { id: res.data.id, name, email };
+    setGuardian(g);
+    await AsyncStorage.setItem("medice_guardian", JSON.stringify(g));
+    return res.data.id as number;
+  };
+
+  const createPatient = async (data: {
+    name:         string;
+    birth_date?:  string;
+    guardian_id:  number;
+    subscription: string;
+    free_until?:  string;
+  }) => {
+    const res = await axios.post(`${apiUrl}/patients`, data);
+    const p   = { id: res.data.id, ...data };
+    setPatient(p);
+    await AsyncStorage.setItem("medice_patient", JSON.stringify(p));
+    return res.data.id as number;
+  };
+
   const postReading = async (data: {
-    patient_id: string;
+    patient_id:  string;
     temperature: number;
-    spo2?: number;
-    bpm?: number;
+    spo2?:       number;
+    bpm?:        number;
+    systolic?:   number;
+    diastolic?:  number;
     spo2_valid?: boolean;
-    bpm_valid?: boolean;
+    bpm_valid?:  boolean;
+    bp_valid?:   boolean;
   }) => {
     try {
       const res = await axios.post(`${apiUrl}/readings`, {
@@ -44,6 +70,8 @@ export function APIProvider({ children }: { children: React.ReactNode }) {
       });
       if (res.data?.active_fever_id !== undefined)
         setPatient((p: any) => ({ ...p, active_fever_id: res.data.active_fever_id }));
+      if (res.data?.bp_level)
+        setLastBpLevel(res.data.bp_level);
     } catch (e) { console.warn("postReading:", e); }
   };
 
@@ -61,7 +89,11 @@ export function APIProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <APIContext.Provider value={{
-      apiUrl, setApiUrl, guardian, patient, feverHistory, postReading, postAntipyretic,
+      apiUrl, setApiUrl,
+      guardian, patient,
+      feverHistory, lastBpLevel,
+      createGuardian, createPatient,
+      postReading, postAntipyretic,
     }}>
       {children}
     </APIContext.Provider>

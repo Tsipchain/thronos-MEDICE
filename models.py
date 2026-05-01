@@ -19,13 +19,24 @@ class Guardian(Base):
 
 class Patient(Base):
     __tablename__ = "patients"
-    id           = Column(Integer, primary_key=True)
-    name         = Column(String)
-    birth_date   = Column(DateTime, nullable=True)
-    guardian_id  = Column(Integer, ForeignKey("guardians.id"))
-    guardian     = relationship("Guardian", back_populates="patients")
-    readings     = relationship("TempReading", back_populates="patient")
-    fever_events = relationship("FeverEvent", back_populates="patient")
+    id              = Column(Integer, primary_key=True)
+    name            = Column(String)
+    birth_date      = Column(DateTime, nullable=True)
+    guardian_id     = Column(Integer, ForeignKey("guardians.id"))
+    # Subscription tier: "basic" (temp+SpO2+HR) or "bp" (+ blood pressure)
+    subscription    = Column(String, default="basic")
+    # Free trial: date until which full service is free (5 months post-device-purchase)
+    free_until      = Column(DateTime, nullable=True)
+    guardian        = relationship("Guardian", back_populates="patients")
+    readings        = relationship("TempReading", back_populates="patient")
+    fever_events    = relationship("FeverEvent", back_populates="patient")
+
+    @property
+    def bp_subscription(self) -> bool:
+        """True when patient has BP add-on or is in free trial."""
+        if self.free_until and datetime.utcnow() < self.free_until:
+            return True
+        return self.subscription == "bp"
 
 
 class TempReading(Base):
@@ -100,10 +111,21 @@ class TempReadingOut(BaseModel):
     class Config: orm_mode = True
 
 
+class SimulateIn(BaseModel):
+    """Input for the /simulate endpoint — no patient_id required."""
+    temperature: float
+    spo2:        Optional[float] = None
+    bpm:         Optional[int]   = None
+    systolic:    Optional[int]   = None
+    diastolic:   Optional[int]   = None
+
+
 class PatientCreate(BaseModel):
-    name:        str
-    birth_date:  Optional[datetime] = None
-    guardian_id: int
+    name:         str
+    birth_date:   Optional[datetime] = None
+    guardian_id:  int
+    subscription: Optional[str]      = "basic"   # "basic" | "bp"
+    free_until:   Optional[datetime] = None
 
 
 class GuardianCreate(BaseModel):
