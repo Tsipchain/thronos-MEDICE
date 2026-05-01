@@ -7,12 +7,13 @@ import os
 from models import (
     Base, Guardian, Patient, TempReading, FeverEvent,
     TempReadingIn, PatientCreate, GuardianCreate, FeverEventOut,
+    SimulateIn,
 )
 from local_analyzer import LocalAnalyzer
 from notifications import (
     send_fever_alert, send_high_fever_alert,
     send_antipyretic_reminder, send_fever_ended,
-    send_spo2_alert, send_hr_alert,
+    send_spo2_alert, send_hr_alert, send_bp_alert,
 )
 from blockchain import record_fever_start, record_fever_end
 from hospital_api import router as hospital_router
@@ -49,84 +50,140 @@ def get_db():
         db.close()
 
 
-@app.post("/readings", response_model=dict)
-async def post_reading(reading: TempReadingIn, db: Session = Depends(get_db)):
-    patient = db.query(Patient).filter(Patient.id == int(reading.patient_id)).first()
-    if not patient:
-        raise HTTPException(404, "Patient not found")
+async def _process_vitals(
+    patient_id: str,
+    reading: TempReadingIn,
+    ts: datetime,
+    fcm_token: str | None,
+    db: Session,
+    patient,
+    save_to_db: bool = True,
+) -> dict:
+    """Shared logic for /readings and /simulate."""
 
-    ts = reading.timestamp or datetime.utcnow()
+    if save_to_db and patient:
+        db.add(TempReading(
+            patient_id  = patient.id,
+            device_id   = reading.device_id,
+            temperature = reading.temperature,
+            spo2        = reading.spo2,
+            bpm         = reading.bpm,
+            systolic    = reading.systolic,
+            diastolic   = reading.diastolic,
+            spo2_valid  = reading.spo2_valid  or False,
+            bpm_valid   = reading.bpm_valid   or False,
+            bp_valid    = reading.bp_valid    or False,
+            timestamp   = ts,
+        ))
+        db.commit()
 
-    db.add(TempReading(
-        patient_id  = patient.id,
-        device_id   = reading.device_id,
-        temperature = reading.temperature,
-        spo2        = reading.spo2,
-        bpm         = reading.bpm,
-        spo2_valid  = reading.spo2_valid or False,
-        bpm_valid   = reading.bpm_valid  or False,
-        timestamp   = ts,
-    ))
-    db.commit()
-
-    t_result = await analyzer.analyze_temp(reading.patient_id, reading.temperature, ts)
+    t_result = await analyzer.analyze_temp(patient_id, reading.temperature, ts)
     v_result = await analyzer.analyze_vitals(
-        reading.patient_id,
-        reading.spo2, reading.spo2_valid or False,
-        reading.bpm,  reading.bpm_valid  or False,
+        patient_id,
+        reading.spo2,      reading.spo2_valid  or False,
+        reading.bpm,       reading.bpm_valid   or False,
+        reading.systolic,  reading.diastolic,
+        reading.bp_valid  or False,
     )
 
-    fcm_token = patient.guardian.fcm_token if patient.guardian else None
+    # ── Notifications (only if real patient with FCM token) ──────────────
+    if fcm_token:
+        if t_result["send_fever_alert"]:
+            if t_result["fever_level"] == "high_fever":
+                await send_high_fever_alert(fcm_token, reading.temperature)
+            else:
+                await send_fever_alert(fcm_token, reading.temperature)
 
-    if t_result["send_fever_alert"] and fcm_token:
-        if t_result["fever_level"] == "high_fever":
-            await send_high_fever_alert(fcm_token, reading.temperature)
-        else:
-            await send_fever_alert(fcm_token, reading.temperature)
+        if t_result["send_antipyretic_reminder"]:
+            await send_antipyretic_reminder(fcm_token)
 
-    if t_result["send_antipyretic_reminder"] and fcm_token:
-        await send_antipyretic_reminder(fcm_token)
+        if v_result["spo2_alert"] and reading.spo2:
+            await send_spo2_alert(fcm_token, reading.spo2, v_result["spo2_level"])
 
-    if t_result["is_new_fever"]:
-        event = FeverEvent(patient_id=patient.id, start_time=ts, peak_temp=reading.temperature)
-        db.add(event)
-        db.commit()
-        tx = await record_fever_start(str(patient.id), int(reading.temperature * 100), int(ts.timestamp()))
-        event.blockchain_tx = tx
-        db.commit()
-        await analyzer.register_fever_started(reading.patient_id, str(event.id))
+        if v_result["hr_alert"] and reading.bpm:
+            await send_hr_alert(fcm_token, reading.bpm, v_result["hr_level"])
 
-    if t_result["active_fever_id"]:
-        event = db.query(FeverEvent).filter(FeverEvent.id == int(t_result["active_fever_id"])).first()
-        if event and reading.temperature > event.peak_temp:
-            event.peak_temp = reading.temperature
+        # BP alert — only fires when patient has bp_subscription enabled
+        bp_enabled = getattr(patient, "bp_subscription", True) if patient else False
+        if v_result["bp_alert"] and bp_enabled and reading.systolic and reading.diastolic:
+            await send_bp_alert(fcm_token, reading.systolic, reading.diastolic, v_result["bp_level"])
+
+    # ── Fever event tracking (only for real patients) ────────────────────
+    if save_to_db and patient:
+        if t_result["is_new_fever"]:
+            event = FeverEvent(patient_id=patient.id, start_time=ts, peak_temp=reading.temperature)
+            db.add(event)
             db.commit()
-
-    if t_result["is_fever_ending"] and t_result["active_fever_id"]:
-        event = db.query(FeverEvent).filter(FeverEvent.id == int(t_result["active_fever_id"])).first()
-        if event:
-            vitals = await analyzer.get_fever_vitals(reading.patient_id)
-            event.end_time = ts
-            event.min_spo2 = vitals["min_spo2"]
-            event.avg_bpm  = vitals["avg_bpm"]
+            tx = await record_fever_start(str(patient.id), int(reading.temperature * 100), int(ts.timestamp()))
+            event.blockchain_tx = tx
             db.commit()
-            await record_fever_end(str(patient.id), event.id)
-            if fcm_token:
-                await send_fever_ended(fcm_token)
+            await analyzer.register_fever_started(patient_id, str(event.id))
 
-    if v_result["spo2_alert"] and fcm_token and reading.spo2:
-        await send_spo2_alert(fcm_token, reading.spo2, v_result["spo2_level"])
-    if v_result["hr_alert"] and fcm_token and reading.bpm:
-        await send_hr_alert(fcm_token, reading.bpm, v_result["hr_level"])
+        if t_result["active_fever_id"]:
+            event = db.query(FeverEvent).filter(FeverEvent.id == int(t_result["active_fever_id"])).first()
+            if event and reading.temperature > event.peak_temp:
+                event.peak_temp = reading.temperature
+                db.commit()
+
+        if t_result["is_fever_ending"] and t_result["active_fever_id"]:
+            event = db.query(FeverEvent).filter(FeverEvent.id == int(t_result["active_fever_id"])).first()
+            if event:
+                vitals = await analyzer.get_fever_vitals(patient_id)
+                event.end_time = ts
+                event.min_spo2 = vitals["min_spo2"]
+                event.avg_bpm  = vitals["avg_bpm"]
+                db.commit()
+                await record_fever_end(str(patient.id), event.id)
+                if fcm_token:
+                    await send_fever_ended(fcm_token)
 
     return {
         "status":          "ok",
         "fever_level":     t_result["fever_level"],
         "spo2_level":      v_result["spo2_level"],
         "hr_level":        v_result["hr_level"],
+        "bp_level":        v_result["bp_level"],
+        "bp_alert":        v_result["bp_alert"],
         "active_fever_id": t_result["active_fever_id"],
         "is_new_fever":    t_result["is_new_fever"],
     }
+
+
+@app.post("/readings", response_model=dict)
+async def post_reading(reading: TempReadingIn, db: Session = Depends(get_db)):
+    patient = db.query(Patient).filter(Patient.id == int(reading.patient_id)).first()
+    if not patient:
+        raise HTTPException(404, "Patient not found")
+
+    ts        = reading.timestamp or datetime.utcnow()
+    fcm_token = patient.guardian.fcm_token if patient.guardian else None
+
+    return await _process_vitals(
+        str(reading.patient_id), reading, ts, fcm_token, db, patient, save_to_db=True,
+    )
+
+
+@app.post("/simulate", response_model=dict)
+async def simulate(body: SimulateIn, db: Session = Depends(get_db)):
+    """Test vitals analysis without a registered patient or physical device."""
+    reading = TempReadingIn(
+        patient_id  = "0",
+        device_id   = "simulator",
+        temperature = body.temperature,
+        spo2        = body.spo2,
+        bpm         = body.bpm,
+        systolic    = body.systolic,
+        diastolic   = body.diastolic,
+        spo2_valid  = body.spo2  is not None,
+        bpm_valid   = body.bpm   is not None,
+        bp_valid    = body.systolic is not None and body.diastolic is not None,
+        timestamp   = datetime.utcnow(),
+    )
+    result = await _process_vitals(
+        "sim", reading, datetime.utcnow(), None, db, None, save_to_db=False,
+    )
+    result["mode"] = "simulation"
+    return result
 
 
 @app.get("/patients/{patient_id}/vitals")
@@ -143,6 +200,9 @@ def current_vitals(patient_id: int, db: Session = Depends(get_db)):
         "temperature": reading.temperature,
         "spo2":        reading.spo2,
         "bpm":         reading.bpm,
+        "systolic":    reading.systolic,
+        "diastolic":   reading.diastolic,
+        "bp_valid":    reading.bp_valid,
         "spo2_valid":  reading.spo2_valid,
         "bpm_valid":   reading.bpm_valid,
         "timestamp":   reading.timestamp,
