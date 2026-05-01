@@ -2,42 +2,39 @@ from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
 from datetime import datetime
-from redis import asyncio as aioredis
 import os
 
 from models import (
     Base, Guardian, Patient, TempReading, FeverEvent,
-    TempReadingIn, TempReadingOut, PatientCreate, GuardianCreate, FeverEventOut,
+    TempReadingIn, PatientCreate, GuardianCreate, FeverEventOut,
 )
-from vital_analyzer import VitalAnalyzer
+from local_analyzer import LocalAnalyzer
 from notifications import (
     send_fever_alert, send_high_fever_alert,
     send_antipyretic_reminder, send_fever_ended,
     send_spo2_alert, send_hr_alert,
 )
-from blockchain import record_fever_start, record_fever_end, get_fever_history
+from blockchain import record_fever_start, record_fever_end
 from hospital_api import router as hospital_router
 from thronos_integration import router as thronos_router
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-DB_URL = os.getenv("DATABASE_URL", "postgresql://medice:medice@localhost/medice")
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+# SQLite on the Railway volume — no external DB needed
+DB_URL = os.getenv("DATABASE_URL", "sqlite:////medice/medice.db")
 
-engine = create_engine(DB_URL)
+_connect_args = {"check_same_thread": False} if DB_URL.startswith("sqlite") else {}
+engine       = create_engine(DB_URL, connect_args=_connect_args)
 SessionLocal = sessionmaker(bind=engine)
 
-analyzer: VitalAnalyzer = None  # initialized in lifespan
+analyzer = LocalAnalyzer()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global analyzer
-    redis = await aioredis.from_url(REDIS_URL, decode_responses=False)
-    analyzer = VitalAnalyzer(redis)
+    os.makedirs("/medice", exist_ok=True)
     Base.metadata.create_all(engine)
     yield
-    await redis.close()
 
 app = FastAPI(title="ThronomedICE Vital Signs API", version="2.0", lifespan=lifespan)
 app.include_router(hospital_router)
@@ -60,7 +57,7 @@ async def post_reading(reading: TempReadingIn, db: Session = Depends(get_db)):
 
     ts = reading.timestamp or datetime.utcnow()
 
-    db_reading = TempReading(
+    db.add(TempReading(
         patient_id  = patient.id,
         device_id   = reading.device_id,
         temperature = reading.temperature,
@@ -69,8 +66,7 @@ async def post_reading(reading: TempReadingIn, db: Session = Depends(get_db)):
         spo2_valid  = reading.spo2_valid or False,
         bpm_valid   = reading.bpm_valid  or False,
         timestamp   = ts,
-    )
-    db.add(db_reading)
+    ))
     db.commit()
 
     t_result = await analyzer.analyze_temp(reading.patient_id, reading.temperature, ts)
@@ -134,7 +130,7 @@ async def post_reading(reading: TempReadingIn, db: Session = Depends(get_db)):
 
 
 @app.get("/patients/{patient_id}/vitals")
-async def current_vitals(patient_id: int, db: Session = Depends(get_db)):
+def current_vitals(patient_id: int, db: Session = Depends(get_db)):
     reading = (
         db.query(TempReading)
         .filter(TempReading.patient_id == patient_id)
@@ -187,7 +183,7 @@ def create_patient(p: PatientCreate, db: Session = Depends(get_db)):
 
 
 @app.post("/patients/{patient_id}/fcm-token")
-async def register_fcm(patient_id: int, body: dict, db: Session = Depends(get_db)):
+def register_fcm(patient_id: int, body: dict, db: Session = Depends(get_db)):
     patient = db.query(Patient).filter(Patient.id == patient_id).first()
     if not patient or not patient.guardian:
         raise HTTPException(404)
