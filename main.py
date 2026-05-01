@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
 from datetime import datetime
-import aioredis
+from redis import asyncio as aioredis
 import os
 
 from models import (
