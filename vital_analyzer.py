@@ -2,7 +2,7 @@
 from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Optional
-import aioredis
+from redis import asyncio as aioredis
 
 FEVER_THRESHOLD        = 38.0
 HIGH_FEVER_THRESHOLD   = 39.0
