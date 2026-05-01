@@ -4,6 +4,10 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'ThronomedICE — Παρακολούθηση Ασθενών',
   description: 'Σύστημα παρακολούθησης ζωτικών σημείων',
+  icons: {
+    icon: [{ url: '/icon.svg', type: 'image/svg+xml' }],
+    shortcut: '/icon.svg',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
