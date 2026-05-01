@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -38,6 +39,22 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="ThronomedICE Vital Signs API", version="2.0", lifespan=lifespan)
+
+_CORS_ORIGINS = [
+    o.strip()
+    for o in os.getenv("CORS_ORIGINS", "https://medice.up.railway.app,http://localhost:3000").split(",")
+    if o.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_CORS_ORIGINS,
+    allow_origin_regex=r"https://.*\.up\.railway\.app",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(hospital_router)
 app.include_router(thronos_router)
 
@@ -86,7 +103,7 @@ async def _process_vitals(
         reading.bp_valid  or False,
     )
 
-    # ── Notifications (only if real patient with FCM token) ──────────────
+    # ── Notifications (only if real patient with FCM token) ──────────────────────────────────────────
     if fcm_token:
         if t_result["send_fever_alert"]:
             if t_result["fever_level"] == "high_fever":
@@ -108,7 +125,7 @@ async def _process_vitals(
         if v_result["bp_alert"] and bp_enabled and reading.systolic and reading.diastolic:
             await send_bp_alert(fcm_token, reading.systolic, reading.diastolic, v_result["bp_level"])
 
-    # ── Fever event tracking (only for real patients) ────────────────────
+    # ── Fever event tracking (only for real patients) ──────────────────────────────────────────
     if save_to_db and patient:
         if t_result["is_new_fever"]:
             event = FeverEvent(patient_id=patient.id, start_time=ts, peak_temp=reading.temperature)
