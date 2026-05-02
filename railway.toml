@@ -6,7 +6,7 @@ builder        = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand           = "/bin/sh -c 'uvicorn main:app --host 0.0.0.0 --port $PORT --workers 2 --loop uvloop'"
+startCommand           = '/bin/sh -c "uvicorn main:app --host 0.0.0.0 --port $PORT --workers 2 --loop uvloop"'
 healthcheckPath        = "/health"
 healthcheckTimeout     = 60
 restartPolicyType      = "ON_FAILURE"
@@ -18,9 +18,6 @@ restartPolicyMaxRetries = 3
 # THRONOS_RPC_URL          = https://api.thronoschain.org
 # MEDICE_PRIVATE_KEY       = 0x...
 # FEVER_CONTRACT_ADDRESS   = 0x...
-# NODE_REWARD_POOL_ADDRESS = 0x...
 # FCM_SERVER_KEY           = ...
 # HOSPITAL_API_KEY         = ...
-# NODE_ID                  = medice-api-railway-$RAILWAY_REPLICA_ID
-# NODE_TYPE                = api_node_medice
 # CORS_ORIGINS             = https://medice.thronoschain.org,https://thronoschain.org
