@@ -42,14 +42,17 @@ app = FastAPI(title="ThronomedICE Vital Signs API", version="2.0", lifespan=life
 
 _CORS_ORIGINS = [
     o.strip()
-    for o in os.getenv("CORS_ORIGINS", "https://medice.up.railway.app,http://localhost:3000").split(",")
+    for o in os.getenv(
+        "CORS_ORIGINS",
+        "https://medice.thronoschain.org,https://thronoschain.org,http://localhost:3000"
+    ).split(",")
     if o.strip()
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
-    allow_origin_regex=r"https://.*\.up\.railway\.app",
+    allow_origin_regex=r"https://(.*\.up\.railway\.app|.*\.thronoschain\.org|thronoschain\.org)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -103,7 +106,6 @@ async def _process_vitals(
         reading.bp_valid  or False,
     )
 
-    # ── Notifications (only if real patient with FCM token) ──────────────────────────────────────────
     if fcm_token:
         if t_result["send_fever_alert"]:
             if t_result["fever_level"] == "high_fever":
@@ -120,12 +122,10 @@ async def _process_vitals(
         if v_result["hr_alert"] and reading.bpm:
             await send_hr_alert(fcm_token, reading.bpm, v_result["hr_level"])
 
-        # BP alert — only fires when patient has bp_subscription enabled
         bp_enabled = getattr(patient, "bp_subscription", True) if patient else False
         if v_result["bp_alert"] and bp_enabled and reading.systolic and reading.diastolic:
             await send_bp_alert(fcm_token, reading.systolic, reading.diastolic, v_result["bp_level"])
 
-    # ── Fever event tracking (only for real patients) ──────────────────────────────────────────
     if save_to_db and patient:
         if t_result["is_new_fever"]:
             event = FeverEvent(patient_id=patient.id, start_time=ts, peak_temp=reading.temperature)
