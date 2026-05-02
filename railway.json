@@ -6,7 +6,7 @@
   },
   "deploy": {
     "numReplicas": 1,
-    "startCommand": "uvicorn main:app --host 0.0.0.0 --port $PORT --workers 2 --loop uvloop",
+    "startCommand": "/bin/sh -c 'uvicorn main:app --host 0.0.0.0 --port $PORT --workers 2 --loop uvloop'",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 60,
     "restartPolicyType": "ON_FAILURE",
