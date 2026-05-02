@@ -10,11 +10,12 @@ Base = declarative_base()
 
 class Guardian(Base):
     __tablename__ = "guardians"
-    id        = Column(Integer, primary_key=True)
-    name      = Column(String)
-    email     = Column(String, unique=True)
-    fcm_token = Column(String, nullable=True)
-    patients  = relationship("Patient", back_populates="guardian")
+    id            = Column(Integer, primary_key=True)
+    name          = Column(String)
+    email         = Column(String, unique=True)
+    password_hash = Column(String, nullable=True)
+    fcm_token     = Column(String, nullable=True)
+    patients      = relationship("Patient", back_populates="guardian")
 
 
 class Patient(Base):
@@ -129,8 +130,14 @@ class PatientCreate(BaseModel):
 
 
 class GuardianCreate(BaseModel):
-    name:  str
-    email: str
+    name:     str
+    email:    str
+    password: str
+
+
+class GuardianLogin(BaseModel):
+    email:    str
+    password: str
 
 
 class FeverEventOut(BaseModel):

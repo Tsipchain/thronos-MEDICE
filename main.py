@@ -3,12 +3,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
 from datetime import datetime
+import hashlib
+import secrets
 import os
 
 from models import (
     Base, Guardian, Patient, TempReading, FeverEvent,
-    TempReadingIn, PatientCreate, GuardianCreate, FeverEventOut,
-    SimulateIn,
+    TempReadingIn, PatientCreate, GuardianCreate, GuardianLogin,
+    FeverEventOut, SimulateIn,
 )
 from local_analyzer import LocalAnalyzer
 from notifications import (
@@ -30,6 +32,21 @@ engine       = create_engine(DB_URL, connect_args=_connect_args)
 SessionLocal = sessionmaker(bind=engine)
 
 analyzer = LocalAnalyzer()
+
+
+def _hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    hashed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000)
+    return f"{salt}:{hashed.hex()}"
+
+
+def _verify_password(password: str, password_hash: str) -> bool:
+    try:
+        salt, hashed = password_hash.split(":", 1)
+    except ValueError:
+        return False
+    check = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000)
+    return secrets.compare_digest(check.hex(), hashed)
 
 
 @asynccontextmanager
@@ -245,10 +262,36 @@ async def mark_antipyretic(event_id: int, db: Session = Depends(get_db)):
 
 @app.post("/guardians", response_model=dict)
 def create_guardian(g: GuardianCreate, db: Session = Depends(get_db)):
-    guardian = Guardian(name=g.name, email=g.email)
+    existing = db.query(Guardian).filter(Guardian.email == g.email).first()
+    if existing:
+        raise HTTPException(409, "Email already registered")
+    guardian = Guardian(
+        name          = g.name,
+        email         = g.email,
+        password_hash = _hash_password(g.password),
+    )
     db.add(guardian)
     db.commit()
     return {"id": guardian.id}
+
+
+@app.post("/login", response_model=dict)
+def login(body: GuardianLogin, db: Session = Depends(get_db)):
+    guardian = db.query(Guardian).filter(Guardian.email == body.email).first()
+    if not guardian or not guardian.password_hash:
+        raise HTTPException(401, "Invalid email or password")
+    if not _verify_password(body.password, guardian.password_hash):
+        raise HTTPException(401, "Invalid email or password")
+    patients = [
+        {"id": p.id, "name": p.name}
+        for p in guardian.patients
+    ]
+    return {
+        "guardian_id": guardian.id,
+        "name":        guardian.name,
+        "email":       guardian.email,
+        "patients":    patients,
+    }
 
 
 @app.post("/patients", response_model=dict)
