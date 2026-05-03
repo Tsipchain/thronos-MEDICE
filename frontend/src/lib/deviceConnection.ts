@@ -1,5 +1,11 @@
 import { postReading, registerDevice } from './api';
 
+// TODO(Android APK): replace demo implementations with Capacitor BLE plugin calls.
+// Candidate APIs:
+// - scanDevices() => BLE scan
+// - connectDevice(deviceId) => BLE connect/pair
+// - provisionDevice(config) => BLE/Wi-Fi provisioning payload
+
 export async function scanDevices() {
   return [{ device_id: 'THR-MEDICE-DEMO-001', device_type: 'bracelet' }];
 }
