@@ -173,7 +173,7 @@ class TempReadingOut(BaseModel):
     bp_valid:    bool
     fever_rate:  Optional[float]  # °C per minute
     timestamp:   datetime
-    class Config: orm_mode = True
+    class Config: from_attributes = True
 
 
 class SimulateIn(BaseModel):
@@ -216,7 +216,7 @@ class FeverEventOut(BaseModel):
     antipyretic_given: bool
     rapid_rise:        bool
     blockchain_tx:     Optional[str]
-    class Config: orm_mode = True
+    class Config: from_attributes = True
 
 
 class StripeCheckoutRequest(BaseModel):
