@@ -22,8 +22,21 @@ logger = logging.getLogger(__name__)
 
 THRONOS_RPC_URL = os.getenv("THRONOS_RPC_URL", "http://localhost:8545")
 PRIVATE_KEY     = os.getenv("MEDICE_PRIVATE_KEY", "")
+THRONOS_APP_KEY = os.getenv("APP_AI_KEY", "")
+THRONOS_ADMIN   = os.getenv("ADMIN_SECRET", "")
 
 router = APIRouter(prefix="/thronos", tags=["thronos"])
+
+
+def _rpc_headers() -> dict:
+    """Build auth headers for the Thronos node."""
+    h = {}
+    if THRONOS_APP_KEY:
+        h["Authorization"] = f"Bearer {THRONOS_APP_KEY}"
+        h["X-API-Key"] = THRONOS_APP_KEY
+    if THRONOS_ADMIN:
+        h["X-Admin-Secret"] = THRONOS_ADMIN
+    return h
 
 
 class ThronomedICEChainInfo:
@@ -33,7 +46,11 @@ class ThronomedICEChainInfo:
 
     def _init(self):
         try:
-            self.w3 = Web3(Web3.HTTPProvider(THRONOS_RPC_URL, request_kwargs={"timeout": 5}))
+            headers = _rpc_headers()
+            self.w3 = Web3(Web3.HTTPProvider(
+                THRONOS_RPC_URL,
+                request_kwargs={"timeout": 5, "headers": headers} if headers else {"timeout": 5},
+            ))
             self.w3.middleware_onion.inject(geth_poa_middleware, layer=0)
             if self.w3.is_connected():
                 logger.info("Thronos v3.6 connected | chain_id=%s | block=%s",
