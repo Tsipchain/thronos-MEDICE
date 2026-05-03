@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import useSWR from 'swr';
 import Link from 'next/link';
-import { getVitals, getFeverHistory } from '@/lib/api';
+import { getVitals, getFeverHistory, getPatientPlan } from '@/lib/api';
 import VitalCard from '@/components/VitalCard';
 import FeverHistoryTable from '@/components/FeverHistoryTable';
 
@@ -36,13 +36,16 @@ const BP_COLOR: Record<BpLevel,string> = {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [patient, setPatient] = useState<any>(null);
-  const [ready,   setReady]   = useState(false);
+  const [patient,  setPatient]  = useState<any>(null);
+  const [guardian, setGuardian] = useState<any>(null);
+  const [ready,    setReady]    = useState(false);
 
   useEffect(() => {
     const p = localStorage.getItem('medice_patient');
-    if (!p) { router.replace('/'); return; }
+    const g = localStorage.getItem('medice_guardian');
+    if (!p) { router.replace('/login'); return; }
     setPatient(JSON.parse(p));
+    if (g) setGuardian(JSON.parse(g));
     setReady(true);
   }, [router]);
 
@@ -55,6 +58,11 @@ export default function DashboardPage() {
     ready ? ['h', patient?.id] : null,
     () => getFeverHistory(patient.id),
     { refreshInterval: 60_000 },
+  );
+  const { data: plan } = useSWR(
+    ready ? ['plan', patient?.id] : null,
+    () => getPatientPlan(patient.id),
+    { refreshInterval: 0 },
   );
 
   if (!ready) return null;
@@ -74,15 +82,22 @@ export default function DashboardPage() {
   const isHRAbnorm  = bpm  !== null && (bpm < 60 || bpm > 130);
   const bpLevel     = classifyBP(sys, dia, bpOk);
 
+  const subLabel = plan?.in_trial
+    ? `🎁 Trial — ${plan.trial_days_left} μέρες απομένουν`
+    : plan?.subscription === 'bp' ? '💓 Πλήρης (με Πίεση)' : '🌡️ Βασική';
+
   return (
     <div className="min-h-screen bg-slate-50">
       <nav className="bg-slate-800 text-white px-6 py-3 flex items-center justify-between">
         <span className="font-bold text-lg">🏥 ThronomedICE</span>
-        <div className="flex gap-6 text-sm">
+        <div className="flex gap-6 text-sm items-center">
           <span className="text-slate-200 font-medium">Dashboard</span>
           <Link href="/simulate" className="text-slate-400 hover:text-white transition">Προσομοίωση</Link>
+          {guardian && (
+            <span className="text-slate-400 text-xs hidden sm:block">👤 {guardian.name}</span>
+          )}
         </div>
-        <button onClick={() => { localStorage.clear(); router.replace('/'); }}
+        <button onClick={() => { localStorage.clear(); router.replace('/login'); }}
           className="text-slate-400 hover:text-white text-sm transition">Αποσύνδεση</button>
       </nav>
 
@@ -90,7 +105,20 @@ export default function DashboardPage() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-slate-800">{patient?.name}</h1>
-            {ts && <p className="text-sm text-slate-400 mt-0.5">Τελευταία: {ts.toLocaleTimeString('el-GR')}</p>}
+            <div className="flex items-center gap-3 mt-0.5">
+              {ts && <p className="text-sm text-slate-400">Τελευταία: {ts.toLocaleTimeString('el-GR')}</p>}
+              {plan && (
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                  plan.in_trial
+                    ? 'bg-green-100 text-green-700'
+                    : plan.subscription === 'bp'
+                      ? 'bg-blue-100 text-blue-700'
+                      : 'bg-slate-100 text-slate-600'
+                }`}>
+                  {subLabel}
+                </span>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 px-3 py-1 rounded-full">
@@ -138,6 +166,14 @@ export default function DashboardPage() {
           </div>
           <div className="text-xs opacity-60 mt-1">mmHg (συστολική / διαστολική)</div>
         </div>
+
+        {plan?.national_health_id && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6 text-sm">
+            <span className="font-semibold text-blue-800">🏥 {plan.health_id_label}:</span>{' '}
+            <span className="text-blue-700 font-mono">{plan.national_health_id}</span>
+            <span className="text-blue-500 ml-2 text-xs">(για σύνδεση με νοσοκομεία)</span>
+          </div>
+        )}
 
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
           <h2 className="text-base font-semibold text-slate-700 mb-4">📋 Ιστορικό Πυρετών</h2>

@@ -10,7 +10,7 @@ import os
 from models import (
     Base, Guardian, Patient, TempReading, FeverEvent,
     TempReadingIn, PatientCreate, GuardianCreate, GuardianLogin,
-    FeverEventOut, SimulateIn,
+    FeverEventOut, SimulateIn, HEALTH_ID_TYPES,
 )
 from local_analyzer import LocalAnalyzer
 from notifications import (
@@ -24,7 +24,6 @@ from thronos_integration import router as thronos_router
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-# SQLite on the Railway volume — no external DB needed
 DB_URL = os.getenv("DATABASE_URL", "sqlite:////medice/medice.db")
 
 _connect_args = {"check_same_thread": False} if DB_URL.startswith("sqlite") else {}
@@ -96,8 +95,6 @@ async def _process_vitals(
     patient,
     save_to_db: bool = True,
 ) -> dict:
-    """Shared logic for /readings and /simulate."""
-
     if save_to_db and patient:
         db.add(TempReading(
             patient_id  = patient.id,
@@ -199,7 +196,6 @@ async def post_reading(reading: TempReadingIn, db: Session = Depends(get_db)):
 
 @app.post("/simulate", response_model=dict)
 async def simulate(body: SimulateIn, db: Session = Depends(get_db)):
-    """Test vitals analysis without a registered patient or physical device."""
     reading = TempReadingIn(
         patient_id  = "0",
         device_id   = "simulator",
@@ -249,6 +245,36 @@ def fever_history(patient_id: int, db: Session = Depends(get_db)):
              .order_by(FeverEvent.start_time.desc()).all()
 
 
+@app.get("/patients/{patient_id}/plan")
+def patient_plan(patient_id: int, db: Session = Depends(get_db)):
+    """Return subscription plan details + health ID info for the patient."""
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(404, "Patient not found")
+
+    now = datetime.utcnow()
+    in_trial  = bool(patient.free_until and now < patient.free_until)
+    days_left = max(0, (patient.free_until - now).days) if in_trial else 0
+
+    health_id_label = None
+    if patient.national_health_id_type:
+        info = HEALTH_ID_TYPES.get(patient.national_health_id_type, {})
+        health_id_label = info.get("label", patient.national_health_id_type.upper())
+
+    return {
+        "patient_id":    patient.id,
+        "name":          patient.name,
+        "subscription":  patient.subscription,
+        "in_trial":      in_trial,
+        "trial_days_left": days_left,
+        "bp_enabled":    patient.bp_subscription,
+        "national_health_id":      patient.national_health_id,
+        "national_health_id_type": patient.national_health_id_type,
+        "health_id_label":         health_id_label,
+        "country":       patient.country,
+    }
+
+
 @app.put("/fever-events/{event_id}/antipyretic")
 async def mark_antipyretic(event_id: int, db: Session = Depends(get_db)):
     event = db.query(FeverEvent).filter(FeverEvent.id == event_id).first()
@@ -282,10 +308,21 @@ def login(body: GuardianLogin, db: Session = Depends(get_db)):
         raise HTTPException(401, "Invalid email or password")
     if not _verify_password(body.password, guardian.password_hash):
         raise HTTPException(401, "Invalid email or password")
-    patients = [
-        {"id": p.id, "name": p.name}
-        for p in guardian.patients
-    ]
+
+    now = datetime.utcnow()
+    patients = []
+    for p in guardian.patients:
+        in_trial  = bool(p.free_until and now < p.free_until)
+        days_left = max(0, (p.free_until - now).days) if in_trial else 0
+        patients.append({
+            "id":           p.id,
+            "name":         p.name,
+            "subscription": p.subscription,
+            "in_trial":     in_trial,
+            "trial_days_left": days_left,
+            "bp_enabled":   p.bp_subscription,
+        })
+
     return {
         "guardian_id": guardian.id,
         "name":        guardian.name,
@@ -296,7 +333,16 @@ def login(body: GuardianLogin, db: Session = Depends(get_db)):
 
 @app.post("/patients", response_model=dict)
 def create_patient(p: PatientCreate, db: Session = Depends(get_db)):
-    patient = Patient(name=p.name, birth_date=p.birth_date, guardian_id=p.guardian_id)
+    patient = Patient(
+        name                    = p.name,
+        birth_date              = p.birth_date,
+        guardian_id             = p.guardian_id,
+        subscription            = p.subscription or "basic",
+        free_until              = p.free_until,
+        national_health_id      = p.national_health_id,
+        national_health_id_type = p.national_health_id_type,
+        country                 = p.country or "GR",
+    )
     db.add(patient)
     db.commit()
     return {"id": patient.id}

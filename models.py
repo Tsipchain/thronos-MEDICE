@@ -7,6 +7,19 @@ from datetime import datetime
 
 Base = declarative_base()
 
+# Supported national health ID types
+HEALTH_ID_TYPES = {
+    "amka":  {"country": "GR", "label": "ΑΜΚΑ (Ελλάδα)",            "digits": 11},
+    "kvnr":  {"country": "DE", "label": "Krankenversicherungsnr. (DE)", "digits": None},
+    "svnr":  {"country": "AT", "label": "Sozialversicherungsnr. (AT)", "digits": 10},
+    "snils": {"country": "RU", "label": "СНИЛС (Россия)",             "digits": 11},
+    "nhs":   {"country": "GB", "label": "NHS Number (UK)",            "digits": 10},
+    "nir":   {"country": "FR", "label": "NIR / INSEE (France)",       "digits": 15},
+    "bsn":   {"country": "NL", "label": "BSN (Nederland)",            "digits": 9},
+    "phn":   {"country": "CA", "label": "Provincial Health No. (CA)", "digits": None},
+    "ssn":   {"country": "US", "label": "SSN (USA)",                  "digits": 9},
+}
+
 
 class Guardian(Base):
     __tablename__ = "guardians"
@@ -24,17 +37,18 @@ class Patient(Base):
     name            = Column(String)
     birth_date      = Column(DateTime, nullable=True)
     guardian_id     = Column(Integer, ForeignKey("guardians.id"))
-    # Subscription tier: "basic" (temp+SpO2+HR) or "bp" (+ blood pressure)
-    subscription    = Column(String, default="basic")
-    # Free trial: date until which full service is free (5 months post-device-purchase)
+    subscription    = Column(String, default="basic")   # "basic" | "bp"
     free_until      = Column(DateTime, nullable=True)
+    # National health ID — used for hospital integration
+    national_health_id      = Column(String, nullable=True)
+    national_health_id_type = Column(String, nullable=True)  # amka | kvnr | svnr | snils | nhs | nir | bsn | phn | ssn
+    country                 = Column(String, nullable=True, default="GR")
     guardian        = relationship("Guardian", back_populates="patients")
     readings        = relationship("TempReading", back_populates="patient")
     fever_events    = relationship("FeverEvent", back_populates="patient")
 
     @property
     def bp_subscription(self) -> bool:
-        """True when patient has BP add-on or is in free trial."""
         if self.free_until and datetime.utcnow() < self.free_until:
             return True
         return self.subscription == "bp"
@@ -48,8 +62,8 @@ class TempReading(Base):
     temperature = Column(Float)
     spo2        = Column(Float,   nullable=True)
     bpm         = Column(Integer, nullable=True)
-    systolic    = Column(Integer, nullable=True)   # mmHg
-    diastolic   = Column(Integer, nullable=True)   # mmHg
+    systolic    = Column(Integer, nullable=True)
+    diastolic   = Column(Integer, nullable=True)
     spo2_valid  = Column(Boolean, default=False)
     bpm_valid   = Column(Boolean, default=False)
     bp_valid    = Column(Boolean, default=False)
@@ -78,6 +92,8 @@ class HospitalAccess(Base):
     hospital_id      = Column(String)
     hospital_name    = Column(String, nullable=True)
     hospital_address = Column(String, nullable=True)
+    # Optional webhook: hospital provides their EMR endpoint for auto-push
+    emr_push_url     = Column(String, nullable=True)
     is_active        = Column(Boolean, default=True)
     revoked_at       = Column(DateTime, nullable=True)
 
@@ -90,8 +106,8 @@ class TempReadingIn(BaseModel):
     temperature: float
     spo2:        Optional[float]    = None
     bpm:         Optional[int]      = None
-    systolic:    Optional[int]      = None   # blood pressure mmHg
-    diastolic:   Optional[int]      = None   # blood pressure mmHg
+    systolic:    Optional[int]      = None
+    diastolic:   Optional[int]      = None
     spo2_valid:  Optional[bool]     = False
     bpm_valid:   Optional[bool]     = False
     bp_valid:    Optional[bool]     = False
@@ -113,7 +129,6 @@ class TempReadingOut(BaseModel):
 
 
 class SimulateIn(BaseModel):
-    """Input for the /simulate endpoint — no patient_id required."""
     temperature: float
     spo2:        Optional[float] = None
     bpm:         Optional[int]   = None
@@ -122,11 +137,14 @@ class SimulateIn(BaseModel):
 
 
 class PatientCreate(BaseModel):
-    name:         str
-    birth_date:   Optional[datetime] = None
-    guardian_id:  int
-    subscription: Optional[str]      = "basic"   # "basic" | "bp"
-    free_until:   Optional[datetime] = None
+    name:                    str
+    birth_date:              Optional[datetime] = None
+    guardian_id:             int
+    subscription:            Optional[str]      = "basic"
+    free_until:              Optional[datetime] = None
+    national_health_id:      Optional[str]      = None
+    national_health_id_type: Optional[str]      = None  # amka | kvnr | svnr | snils | nhs | nir | bsn | phn | ssn
+    country:                 Optional[str]      = "GR"
 
 
 class GuardianCreate(BaseModel):
