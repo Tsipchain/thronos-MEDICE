@@ -1,4 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
@@ -6,10 +8,12 @@ from datetime import datetime, timedelta
 import hashlib
 import secrets
 import os
+import logging
 import stripe
+from pydantic import BaseModel, field_validator
 
 from models import (
-    Base, Guardian, Patient, TempReading, FeverEvent,
+    Base, Guardian, Patient, TempReading, FeverEvent, Device,
     TempReadingIn, PatientCreate, GuardianCreate, GuardianLogin,
     FeverEventOut, SimulateIn, HEALTH_ID_TYPES,
     StripeCheckoutRequest,
@@ -26,6 +30,7 @@ from hospital_api import router as hospital_router
 from thronos_integration import router as thronos_router
 from reseller_api import router as reseller_router
 from sqlalchemy import create_engine
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 DB_URL = os.getenv("DATABASE_URL", "sqlite:////medice/medice.db")
@@ -47,6 +52,76 @@ engine       = create_engine(DB_URL, connect_args=_connect_args)
 SessionLocal = sessionmaker(bind=engine)
 
 analyzer = LocalAnalyzer()
+logger = logging.getLogger(__name__)
+
+
+def _run_sqlite_startup_migrations() -> None:
+    if not DB_URL.startswith("sqlite"):
+        return
+
+    required_columns: dict[str, list[tuple[str, str]]] = {
+        "guardians": [
+            ("password_hash", "TEXT"),
+            ("fcm_token", "TEXT"),
+            ("subscription_tier", "TEXT DEFAULT 'free'"),
+            ("subscription_status", "TEXT DEFAULT 'active'"),
+            ("stripe_customer_id", "TEXT"),
+            ("stripe_subscription_id", "TEXT"),
+            ("trial_ends_at", "DATETIME"),
+            ("subscription_renews_at", "DATETIME"),
+            ("created_at", "DATETIME"),
+        ],
+        "patients": [
+            ("subscription", "TEXT DEFAULT 'basic'"),
+            ("free_until", "DATETIME"),
+            ("national_health_id", "TEXT"),
+            ("national_health_id_type", "TEXT"),
+            ("country", "TEXT DEFAULT 'GR'"),
+            ("last_fever_check_time", "DATETIME"),
+            ("last_fever_rate", "FLOAT"),
+        ],
+        "fever_events": [
+            ("min_spo2", "FLOAT"),
+            ("avg_bpm", "FLOAT"),
+            ("antipyretic_given", "BOOLEAN DEFAULT 0"),
+            ("rapid_rise", "BOOLEAN DEFAULT 0"),
+            ("blockchain_tx", "TEXT"),
+        ],
+        "temp_readings": [
+            ("device_id", "TEXT"),
+            ("spo2", "FLOAT"),
+            ("bpm", "INTEGER"),
+            ("systolic", "INTEGER"),
+            ("diastolic", "INTEGER"),
+            ("spo2_valid", "BOOLEAN DEFAULT 0"),
+            ("bpm_valid", "BOOLEAN DEFAULT 0"),
+            ("bp_valid", "BOOLEAN DEFAULT 0"),
+            ("fever_rate", "FLOAT"),
+            ("timestamp", "DATETIME"),
+        ],
+    }
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS devices (
+                id INTEGER PRIMARY KEY,
+                patient_id INTEGER,
+                device_id TEXT UNIQUE,
+                device_type TEXT,
+                firmware_version TEXT,
+                connection_mode TEXT,
+                last_seen_at DATETIME,
+                battery_level INTEGER,
+                created_at DATETIME
+            )
+        """))
+        for table_name, columns in required_columns.items():
+            existing = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
+            existing_names = {row[1] for row in existing}
+            for col_name, col_def in columns:
+                if col_name not in existing_names:
+                    conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_def}"))
+                    logger.info("SQLite startup migration added column %s.%s", table_name, col_name)
 
 
 def _hash_password(password: str) -> str:
@@ -68,27 +143,91 @@ def _verify_password(password: str, password_hash: str) -> bool:
 async def lifespan(app: FastAPI):
     os.makedirs("/medice", exist_ok=True)
     Base.metadata.create_all(engine)
+    _run_sqlite_startup_migrations()
     yield
 
 app = FastAPI(title="ThronomedICE Vital Signs API", version="2.1", lifespan=lifespan)
 
-_CORS_ORIGINS = [
-    o.strip()
-    for o in os.getenv(
-        "CORS_ORIGINS",
-        "https://medice.thronoschain.org,https://thronoschain.org,http://localhost:3000"
-    ).split(",")
-    if o.strip()
-]
+def _parse_cors_origins() -> list[str]:
+    defaults = [
+        "https://medice.thronoschain.org",
+        "https://www.medice.thronoschain.org",
+        "https://thronoschain.org",
+        "https://www.thronoschain.org",
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8080",
+    ]
+    raw = os.getenv("CORS_ORIGINS", "")
+    if not raw.strip():
+        return defaults
+    parsed = [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
+    # Keep configured values first, then append missing defaults
+    return list(dict.fromkeys(parsed + defaults))
+
+
+_CORS_ORIGINS = _parse_cors_origins()
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
-    allow_origin_regex=r"https://(.*\.up\.railway\.app|.*\.thronoschain\.org|thronoschain\.org)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+logger.info("CORS configured with %d origins: %s", len(_CORS_ORIGINS), _CORS_ORIGINS)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    def _safe_validation_errors() -> list[dict]:
+        safe_errors = []
+        for err in exc.errors():
+            item = dict(err)
+            ctx = item.get("ctx")
+            if isinstance(ctx, dict):
+                item["ctx"] = {k: str(v) for k, v in ctx.items()}
+            safe_errors.append(item)
+        return safe_errors
+
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": _safe_validation_errors(),
+            "message": "Validation failed",
+        },
+    )
+
+
+class PatientCreateRegister(BaseModel):
+    name: str
+    birth_date: str
+    subscription: str = "basic"
+    national_health_id: str | None = None
+    national_health_id_type: str | None = None
+    country: str | None = "GR"
+
+    @field_validator("birth_date")
+    @classmethod
+    def birth_date_must_be_date(cls, v: str) -> str:
+        try:
+            datetime.strptime(v, "%Y-%m-%d")
+        except ValueError as exc:
+            raise ValueError("birth_date must be in YYYY-MM-DD format") from exc
+        return v
+
+    @field_validator("subscription")
+    @classmethod
+    def subscription_must_be_supported(cls, v: str) -> str:
+        if v not in {"basic", "bp", "premium"}:
+            raise ValueError("subscription must be one of: basic, bp, premium")
+        return v
+
+
+class RegisterPayload(BaseModel):
+    guardian: GuardianCreate
+    patient: PatientCreateRegister
+
 
 app.include_router(hospital_router)
 app.include_router(thronos_router)
@@ -251,6 +390,11 @@ async def post_reading(reading: TempReadingIn, db: Session = Depends(get_db)):
 
     ts        = reading.timestamp or datetime.utcnow()
     fcm_token = patient.guardian.fcm_token if patient.guardian else None
+    if reading.device_id:
+        device = db.query(Device).filter(Device.device_id == reading.device_id).first()
+        if device:
+            device.last_seen_at = ts
+            db.commit()
 
     return await _process_vitals(
         str(reading.patient_id), reading, ts, fcm_token, db, patient, save_to_db=True,
@@ -351,12 +495,20 @@ async def mark_antipyretic(event_id: int, db: Session = Depends(get_db)):
 
 @app.post("/guardians", response_model=dict)
 def create_guardian(g: GuardianCreate, db: Session = Depends(get_db)):
-    existing = db.query(Guardian).filter(Guardian.email == g.email).first()
+    logger.info("POST /guardians payload keys: %s", ["name", "email", "password"])
+    email = g.email.strip().lower()
+    name = g.name.strip()
+    if not name:
+        raise HTTPException(422, "Guardian name is required")
+    if len(g.password) < 8:
+        raise HTTPException(422, "Password must be at least 8 characters")
+
+    existing = db.query(Guardian).filter(Guardian.email == email).first()
     if existing:
         raise HTTPException(409, "Email already registered")
     guardian = Guardian(
-        name          = g.name,
-        email         = g.email,
+        name          = name,
+        email         = email,
         password_hash = _hash_password(g.password),
         subscription_tier = "free",
         subscription_status = "active",
@@ -364,6 +516,74 @@ def create_guardian(g: GuardianCreate, db: Session = Depends(get_db)):
     db.add(guardian)
     db.commit()
     return {"id": guardian.id}
+
+
+@app.post("/register", response_model=dict)
+def register(payload: RegisterPayload, db: Session = Depends(get_db)):
+    logger.info("POST /register payload keys: %s", ["guardian", "patient"])
+    g = payload.guardian
+    p = payload.patient
+
+    email = g.email.strip().lower()
+    g_name = g.name.strip()
+    p_name = p.name.strip()
+
+    if not g_name:
+        raise HTTPException(422, "Guardian name is required")
+    if not p_name:
+        raise HTTPException(422, "Patient name is required")
+    if len(g.password) < 8:
+        raise HTTPException(422, "Password must be at least 8 characters")
+
+    existing = db.query(Guardian).filter(Guardian.email == email).first()
+    if existing:
+        raise HTTPException(409, "Email already registered")
+
+    birth_date = datetime.strptime(p.birth_date, "%Y-%m-%d")
+    try:
+        guardian = Guardian(
+            name=g_name,
+            email=email,
+            password_hash=_hash_password(g.password),
+            subscription_tier="free",
+            subscription_status="active",
+        )
+        db.add(guardian)
+        db.flush()
+
+        patient = Patient(
+            name=p_name,
+            birth_date=birth_date,
+            guardian_id=guardian.id,
+            subscription=p.subscription,
+            national_health_id=p.national_health_id,
+            national_health_id_type=p.national_health_id_type,
+            country=p.country or "GR",
+        )
+        db.add(patient)
+        db.flush()
+        db.commit()
+        return {"guardian_id": guardian.id, "patient_id": patient.id, "status": "ok"}
+    except Exception:
+        db.rollback()
+        raise
+
+
+@app.get("/blockchain/status", response_model=dict)
+def blockchain_status():
+    from blockchain import get_status
+    return get_status()
+
+
+@app.get("/config/public", response_model=dict)
+def public_config():
+    from blockchain import get_status
+    return {
+        "app_version": app.version,
+        "cors_origins": _CORS_ORIGINS,
+        "cors_origins_count": len(_CORS_ORIGINS),
+        "blockchain_connected": get_status().get("connected", False),
+    }
 
 
 @app.post("/login", response_model=dict)
@@ -414,6 +634,65 @@ def create_patient(p: PatientCreate, db: Session = Depends(get_db)):
     db.add(patient)
     db.commit()
     return {"id": patient.id}
+
+
+@app.post("/devices/register", response_model=dict)
+def register_device(body: dict, db: Session = Depends(get_db)):
+    patient_id = int(body.get("patient_id"))
+    device_id = str(body.get("device_id", "")).strip()
+    if not device_id:
+        raise HTTPException(422, "device_id is required")
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(404, "Patient not found")
+    existing = db.query(Device).filter(Device.device_id == device_id).first()
+    if existing:
+        existing.patient_id = patient_id
+        existing.device_type = body.get("device_type")
+        existing.firmware_version = body.get("firmware_version")
+        existing.connection_mode = body.get("connection_mode")
+        db.commit()
+        return {"status": "ok", "id": existing.id, "device_id": existing.device_id}
+    d = Device(
+        patient_id=patient_id,
+        device_id=device_id,
+        device_type=body.get("device_type"),
+        firmware_version=body.get("firmware_version"),
+        connection_mode=body.get("connection_mode"),
+        created_at=datetime.utcnow(),
+    )
+    db.add(d)
+    db.commit()
+    return {"status": "ok", "id": d.id, "device_id": d.device_id}
+
+
+@app.get("/patients/{patient_id}/devices", response_model=list[dict])
+def patient_devices(patient_id: int, db: Session = Depends(get_db)):
+    return [
+        {
+            "id": d.id,
+            "device_id": d.device_id,
+            "device_type": d.device_type,
+            "firmware_version": d.firmware_version,
+            "connection_mode": d.connection_mode,
+            "last_seen_at": d.last_seen_at,
+            "battery_level": d.battery_level,
+            "created_at": d.created_at,
+        }
+        for d in db.query(Device).filter(Device.patient_id == patient_id).all()
+    ]
+
+
+@app.post("/devices/{device_id}/heartbeat", response_model=dict)
+def device_heartbeat(device_id: str, body: dict, db: Session = Depends(get_db)):
+    d = db.query(Device).filter(Device.device_id == device_id).first()
+    if not d:
+        raise HTTPException(404, "Device not found")
+    d.last_seen_at = datetime.utcnow()
+    if body.get("battery_level") is not None:
+        d.battery_level = int(body["battery_level"])
+    db.commit()
+    return {"status": "ok", "device_id": d.device_id, "last_seen_at": d.last_seen_at}
 
 
 @app.post("/patients/{patient_id}/fcm-token")
