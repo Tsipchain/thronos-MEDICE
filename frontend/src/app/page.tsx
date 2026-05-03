@@ -50,14 +50,23 @@ export default function Home() {
     if (gPass.length < 8) {
       setError('Ο κωδικός πρέπει να έχει τουλάχιστον 8 χαρακτήρες.'); return;
     }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(pDob)) {
+      setError('Η ημερομηνία γέννησης πρέπει να είναι στη μορφή YYYY-MM-DD.'); return;
+    }
     localStorage.setItem('medice_api_url', apiUrl.trim());
     setLoading(true); setError('');
     try {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('register payload shape', {
+          guardian: { name: !!gName, email: !!gEmail, password: '***' },
+          patient: { name: !!pName, birth_date: pDob, subscription: sub, country: country || 'GR' },
+        });
+      }
       const { guardian_id: gId, patient_id: pId } = await registerGuardianAndPatient({
         guardian: { name: gName, email: gEmail, password: gPass },
         patient: {
           name: pName,
-          birth_date: pDob || '1991-04-15',
+          birth_date: pDob,
           subscription: sub,
           national_health_id: healthId || undefined,
           national_health_id_type: healthIdType || undefined,
@@ -120,7 +129,7 @@ export default function Home() {
 
           <Sec title="🧒 Ασθενής">
             <Inp label="Όνομα *" value={pName} set={setPName} placeholder="Μαρία Παπαδοπούλου" />
-            <Inp label="Ημ. Γέννησης (YYYY-MM-DD)" value={pDob} set={setPDob} placeholder="2015-06-15" />
+            <Inp label="Ημ. Γέννησης (YYYY-MM-DD) *" value={pDob} set={setPDob} placeholder="2015-06-15" type="date" />
             <div>
               <label className="block text-xs text-slate-500 mb-2">Συνδρομή</label>
               <div className="grid grid-cols-2 gap-2">

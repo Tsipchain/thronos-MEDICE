@@ -30,6 +30,7 @@ from hospital_api import router as hospital_router
 from thronos_integration import router as thronos_router
 from reseller_api import router as reseller_router
 from sqlalchemy import create_engine
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 DB_URL = os.getenv("DATABASE_URL", "sqlite:////medice/medice.db")
@@ -54,6 +55,50 @@ analyzer = LocalAnalyzer()
 logger = logging.getLogger(__name__)
 
 
+def _run_sqlite_startup_migrations() -> None:
+    if not DB_URL.startswith("sqlite"):
+        return
+
+    required_columns: dict[str, list[tuple[str, str]]] = {
+        "guardians": [
+            ("password_hash", "TEXT"),
+            ("fcm_token", "TEXT"),
+            ("subscription_tier", "TEXT DEFAULT 'free'"),
+            ("subscription_status", "TEXT DEFAULT 'active'"),
+            ("stripe_customer_id", "TEXT"),
+            ("stripe_subscription_id", "TEXT"),
+            ("trial_ends_at", "DATETIME"),
+            ("subscription_renews_at", "DATETIME"),
+            ("created_at", "DATETIME"),
+        ],
+        "patients": [
+            ("subscription", "TEXT DEFAULT 'basic'"),
+            ("free_until", "DATETIME"),
+            ("national_health_id", "TEXT"),
+            ("national_health_id_type", "TEXT"),
+            ("country", "TEXT DEFAULT 'GR'"),
+            ("last_fever_check_time", "DATETIME"),
+            ("last_fever_rate", "FLOAT"),
+        ],
+        "fever_events": [
+            ("min_spo2", "FLOAT"),
+            ("avg_bpm", "FLOAT"),
+            ("antipyretic_given", "BOOLEAN DEFAULT 0"),
+            ("rapid_rise", "BOOLEAN DEFAULT 0"),
+            ("blockchain_tx", "TEXT"),
+        ],
+    }
+
+    with engine.begin() as conn:
+        for table_name, columns in required_columns.items():
+            existing = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
+            existing_names = {row[1] for row in existing}
+            for col_name, col_def in columns:
+                if col_name not in existing_names:
+                    conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_def}"))
+                    logger.info("SQLite startup migration added column %s.%s", table_name, col_name)
+
+
 def _hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
     hashed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000)
@@ -73,6 +118,7 @@ def _verify_password(password: str, password_hash: str) -> bool:
 async def lifespan(app: FastAPI):
     os.makedirs("/medice", exist_ok=True)
     Base.metadata.create_all(engine)
+    _run_sqlite_startup_migrations()
     yield
 
 app = FastAPI(title="ThronomedICE Vital Signs API", version="2.1", lifespan=lifespan)
@@ -109,10 +155,20 @@ logger.info("CORS configured with %d origins: %s", len(_CORS_ORIGINS), _CORS_ORI
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    def _safe_validation_errors() -> list[dict]:
+        safe_errors = []
+        for err in exc.errors():
+            item = dict(err)
+            ctx = item.get("ctx")
+            if isinstance(ctx, dict):
+                item["ctx"] = {k: str(v) for k, v in ctx.items()}
+            safe_errors.append(item)
+        return safe_errors
+
     return JSONResponse(
         status_code=422,
         content={
-            "detail": exc.errors(),
+            "detail": _safe_validation_errors(),
             "message": "Validation failed",
         },
     )
@@ -129,7 +185,10 @@ class PatientCreateRegister(BaseModel):
     @field_validator("birth_date")
     @classmethod
     def birth_date_must_be_date(cls, v: str) -> str:
-        datetime.strptime(v, "%Y-%m-%d")
+        try:
+            datetime.strptime(v, "%Y-%m-%d")
+        except ValueError as exc:
+            raise ValueError("birth_date must be in YYYY-MM-DD format") from exc
         return v
 
     @field_validator("subscription")
