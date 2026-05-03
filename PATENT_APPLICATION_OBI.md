@@ -1,405 +1,406 @@
-# Αίτηση Διπλώματος Ευρεσιτεχνίας
-## Hellenic Patent Office (OBI) Application
-
-**Τίτλος Εφεύρεσης / Title:**
-Decentralized Wearable System for Continuous Pediatric Vital Signs Monitoring with Fever Velocity Detection, Blockchain Recording, and National Health ID Integration
+# ΑΙΤΗΣΗ ΔΙΠΛΩΜΑΤΟΣ ΕΥΡΕΣΙΤΕΧΝΙΑΣ
+## ΟΒΙ (Οργανισμός Βιομηχανικής Ιδιοκτησίας Ελλάδος)
 
 ---
 
-## ΑΝΑΦΟΡΑ / ABSTRACT
+## Α. ΓΕΝΙΚΑ ΣΤΟΙΧΕΙΑ
 
-A decentralized system for continuous monitoring of vital signs (temperature, blood oxygen, heart rate, blood pressure) in pediatric patients, featuring patented fever velocity detection (rate-of-rise of temperature), immutable blockchain recording of fever events, and secure hospital integration via national health identifiers (AMKA, KVNR, SVNR, SNILS, NHS, NIR, BSN, PHN, etc.).
+**Τίτλος Ευρεσιτεχνίας:**
+> **"Σύστημα Παρακολούθησης Θερμοκρασίας και Ζωτικών Σημείων Παιδιών με Αυτόματη Ανίχνευση Ταχείας Ανόδου Πυρετού, Ασφαλή Σύνδεση με Νοσοκομειακά Συστήματα μέσω Εθνικών Αριθμών Υγείας και Blockchain Αρχείο."
 
-The system comprises:
-1. **Wearable Device Module** – Bluetooth low-energy sensor transmission
-2. **Mobile Guardian Application** – Real-time alerts and health management (React Native)
-3. **Cloud Microservices Backend** – FastAPI + PostgreSQL with Stripe subscription billing
-4. **Hospital Integration API** – Secure patient lookup and EMR webhook push
-5. **Immutable Blockchain Ledger** – Thronos chain for fever event recording
+**Άλλα Ονόματα Εφεύρετη:**
+- Όνομα σας
+- Τρίτοι εφευρέτες (αν υπάρχουν)
 
-**Core Innovation:** Fever velocity algorithm detecting rapid temperature rise (>0.8°C per 30 minutes) triggering immediate clinical alert, enabling early intervention in pediatric fever management.
-
----
-
-## ΑΝΕΞΆΡΤΗΤΕΣ ΑΞΙΏΣΕΙΣ / INDEPENDENT CLAIMS
-
-### Claim 1: System Architecture (Broad)
-A decentralized pediatric vital signs monitoring system comprising:
-- (a) A Bluetooth LE wearable sensor device measuring temperature, SpO₂, heart rate, and blood pressure
-- (b) A mobile guardian application (iOS/Android) with real-time alert notifications
-- (c) A cloud backend (FastAPI + PostgreSQL) with subscription tier management
-- (d) A blockchain ledger (Thronos chain) recording fever events immutably
-- (e) A hospital integration API accepting national health ID queries and EMR webhook pushes
-- (f) Multi-language support (Greek, English, German) for global markets
-
-**Claim Scope:** The combination of wearable + mobile + cloud + blockchain + hospital API in a unified pediatric monitoring platform.
+**Ημερομηνία Δημιουργίας Εφεύρεσης:**
+- Πρώτη υλοποίηση: [Ημερομηνία]
+- Proof of concept: GitHub commits (https://github.com/Tsipchain/thronos-MEDICE)
 
 ---
 
-### Claim 2: Fever Velocity Detection Algorithm (Narrow - Core Patentable)
+## Β. ΠΕΡΙΛΗΨΗ (ABSTRACT)
 
-A method for detecting rapid fever onset in pediatric patients comprising:
+### Τεχνικό Πεδίο
+Η παρούσα ευρεσιτεχνία αφορά σύστημα παρακολούθησης θερμοκρασίας και ζωτικών σημείων σε παιδιά, με εστίαση στην **ανίχνευση ταχείας ανόδου πυρετού (fever velocity detection)** και την **ασφαλή σύνδεση με νοσοκομειακά συστήματα**.
 
-**Steps:**
-1. Receive consecutive temperature readings T₁, T₂ at timestamps t₁, t₂
-2. Calculate fever rate as: **dT/dt = (T₂ - T₁) / (t₂ - t₁)** in °C per minute
-3. Detect rapid rise when: **(dT/dt > 0.0267 °C/min) AND (T₂ ≥ 38.0°C)**
-   - Equivalent to: >0.8°C per 30 minutes at fever threshold
-4. Upon detection, immediately trigger:
-   - 🚨 Push notification to guardian device
-   - Blockchain transaction recording fever start
-   - Hospital access webhook notification
-5. Continue monitoring until temperature drops below 38.0°C for 30+ minutes
+### Περιγραφή
+Το σύστημα αποτελείται από:
+1. **Wearable IoT συσκευή** (ESP32-S3 + MLX90614 + MAX30102) που μετρά θερμοκρασία, SpO2 και καρδιακό ρυθμό
+2. **Mobile/Web εφαρμογή** για κηδεμόνες που λαμβάνουν alerts
+3. **Backend server** που υπολογίζει την ταχύτητα ανόδου πυρετού (dT/dt) και αποθηκεύει αναλλοίωτο ιστορικό σε blockchain
+4. **Hospital API** που επιτρέπει σύνδεση νοσοκομείων με ασφάλεια κατά την ταυτοποίηση με ΑΜΚΑ ή άλλα εθνικά συστήματα υγείας
 
-**Technical Advantage:**
-- Early detection window: 15-30 minutes before traditional "fever management" protocols
-- Enables preventive intervention before febrile seizure risk or serious illness escalation
-- Particularly valuable for infants/toddlers where fever escalation speed correlates with infection severity
+### Πρωτοτυπία
+Οι παρακάτω χαρακτηριστικά είναι νέα και μη προφανή:
 
----
+**Α. Ανίχνευση Ταχείας Ανόδου Πυρετού (dT/dt)**
+- Υπολογισμός της ταχύτητας μεταβολής θερμοκρασίας μεταξύ διαδοχικών μετρήσεων
+- Κατώφλι alert: >0.8°C ανά 30 λεπτά = άμεση ειδοποίηση κηδεμόνα
+- Προειδοποίηση **πριν** ο πυρετός γίνει υψηλός, όχι **μετά**
+- Διαφορά από υπάρχουσες λύσεις (π.χ. Owlet): Το Owlet μόνο συγκρίνει τιμή με κατώφλι, δεν υπολογίζει rate-of-rise
 
-### Claim 3: Blockchain-Backed Immutable Fever Event Recording
+**Β. Blockchain-Anchored Fever History**
+- Κάθε εγγραφή πυρετού και ανόδου μετατρέπεται σε blockchain transaction
+- Αμετάβλητο ιστορικό — δεν μπορεί να τροποποιηθεί αναδρομικά
+- Νομικό αποδεικτικό στοιχείο για νοσοκομεία και ασφαλιστικές
+- Δεν υπάρχει άλλη wearable λύση παγκοσμίως με blockchain integration
 
-A method for recording pediatric fever events on a blockchain ledger:
+**Γ. Guardian-Controlled Hospital Access με Εθνικούς Αριθμούς Υγείας**
+- Νοσοκομεία ερευνούν ασθενή **μόνο** με το ΑΜΚΑ (Ελλάδα) ή KVNR (Γερμανία) ή NHS (UK) κλπ.
+- Κηδεμόνας δίνει συγκατάθεση σε wearable → αυτόματα το νοσοκομείο έχει πρόσβαση
+- Hospital EMR webhook: αυτόματη ενημέρωση ηλεκτρονικού φακέλου ασθενή
+- Απλή, decentralized λύση — χωρίς κεντρικό ιατρικό αρχείο
 
-**Recorded Data:**
-- `fever_start`: timestamp of fever onset
-- `temperature_at_start`: initial recorded temperature (°C)
-- `temperature_peak`: maximum temperature during event
-- `duration`: time from fever start to resolution
-- `rapid_rise_flag`: boolean indicating velocity-based detection
-- `guardian_interventions`: antipyretic administration timestamps
-- `hospital_access_log`: list of hospitals accessing the record
-- `patient_national_id`: de-identified reference (AMKA hash, KVNR, etc)
-
-**Blockchain Chain:** Thronos (custom EVM-compatible chain)
-- Smart contract: `FeverHistory.sol` with immutable log and cryptographic proof
-- Prevents tampering or deletion of medical history
-- Enables medical-legal documentation for liability protection
-- Facilitates clinical research with de-identified aggregated data
+**Δ. Πολυγλωσσικός Σχεδιασμός Εθνικών ID**
+- Υποστήριξη ΑΜΚΑ (Ελλάδα), KVNR (Γερμανία), SVNR (Αυστρία), NHS (UK), SNILS (Ρωσία), κλπ.
+- Ενιαίο σύστημα για διεθνή επέκταση
+- Ευκολία διαλειτουργικότητας με υγειονομικά συστήματα διαφόρων χωρών
 
 ---
 
-### Claim 4: Hospital Integration via National Health IDs
+## Γ. ΑΝΑΛΥΤΙΚΗ ΠΕΡΙΓΡΑΦΗ ΤΗΣ ΕΦΕΥΡΕΣΗΣ
 
-A method for secure hospital access to pediatric patient data using national health identifiers:
+### 1. ΣΚΟΠΟΣ ΤΗΣ ΕΦΕΥΡΕΣΗΣ
 
-**Supported ID Types:**
-- **AMKA** (Αριθμός Μητρώου Ασθενούς) – Greece
-- **KVNR** (Krankenversichertennummer) – Germany
-- **SVNR** (Sozialversicherungsnummer) – Austria
-- **SNILS** (Социальный Номер Индивидуального Лицевого Счета) – Russia
-- **NHS Number** – United Kingdom
-- **NIR** (Numéro d'Inscription au Répertoire) – France
-- **BSN** (Burgerservicenummer) – Netherlands
-- **PHN** (Personenversicherungsnummer) – Switzerland
-- **Personnummer** – Sweden
+Ο σκοπός είναι να παρέχει:
+- **Ταχύτατη ανίχνευση επικίνδυνης ανόδου πυρετού** σε παιδιά
+- **Ασφαλή και νομικά αποδεκτή** σύνδεση με νοσοκομειακά συστήματα
+- **Αμετάβλητο ιστορικό** για ιατροδικαστικές απαιτήσεις
+- **Χαμηλό κόστος** wearable device (~€80 συσκευή, €10-25/μήνα subscription)
 
-**Integration Flow:**
-1. Hospital calls `/hospital/patients/lookup?health_id=<AMKA>&health_id_type=amka`
-2. System verifies guardian-granted access (stored in `HospitalAccess` table)
-3. Returns: patient summary, latest vitals, recent fever events, rapid_rise history
-4. Optional: Hospital configures EMR webhook URL → automatic vital push on new readings
-5. All access logged and auditable by guardian
+### 2. ΤΕΧΝΙΚΗ ΠΕΡΙΓΡΑΦΗ
 
----
+#### Α. Hardware (ESP32-S3 Wristband)
 
-### Claim 5: Multi-Country National Health ID Support with Localized Subscription Tiers
+**Αισθητήρες:**
+- MLX90614: IR θερμόμετρο, ±0.5°C ακρίβεια
+- MAX30102: Pulse oximeter (SpO2) + heart rate
+- Sampling: κάθε 5 λεπτά (configurable)
 
-A method for international pediatric monitoring with region-specific pricing and national health system integration:
+**Συγχρονισμός με Server:**
+- BLE 5.0 → React Native app → HTTPS → FastAPI server
+- Timestamp καταγράφεται σε κάθε ανάγνωση
 
-**Feature Set:**
-1. Support for 9 national health ID systems (Claim 4 list)
-2. Multi-currency subscription billing:
-   - **Tier 1 (Basic):** €10/month (temperature + SpO₂ + HR)
-   - **Tier 2 (Premium):** €15/month (Basic + blood pressure)
-   - **Tier 3 (Family):** €25/month (5 children, all vitals)
-3. Regional hospital API endpoints:
-   - Greek: `GET /hospital/patients/lookup?health_id=12345678901&health_id_type=amka`
-   - German: `GET /hospital/patients/lookup?health_id=X123456789&health_id_type=kvnr`
-   - Russian: `GET /hospital/patients/lookup?health_id=123-456-789&health_id_type=snils`
-4. Localized alerts and UI (Greek, German, Russian, English)
-5. Compliance with regional data protection (GDPR, Bundesdatenschutzgesetz, PIPL, DPA)
-
----
-
-## ΤΕΧΝΙΚΉ ΠΕΡΙΓΡΑΦΉ / TECHNICAL DESCRIPTION
-
-### System Architecture Diagram
+#### Β. Fever Velocity Detection Algorithm
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        CLOUD BACKEND (FastAPI)                  │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  /readings          POST         TempReading + fever_rate  │ │
-│  │  /fever-events      GET          FeverEvent list + rapid   │ │
-│  │  /guardian/*/sub    GET          Subscription status       │ │
-│  │  /subscribe/chk     POST         Stripe Checkout session   │ │
-│  │  /subscribe/webhook POST         Stripe event handling     │ │
-│  │  /hospital/*        GET/POST     Access + EMR push         │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│           ↑ PostgreSQL / SQLite        ↓ httpx webhook calls   │
-└─────────────────────────────────────────────────────────────────┘
-         ↓ FastAPI REST API                           ↓ Stripe API
-     ┌─────────────────┐                     ┌────────────────────┐
-     │  Mobile App     │ Vital readings       │ Subscription Mgmt  │
-     │  (React Native) │ FCM push notify ←─── │ (Stripe.com)       │
-     │  Guardian UX    │  fever alerts        │ Webhook process    │
-     └─────────────────┘                     └────────────────────┘
-         ↑ Bluetooth LE                           ↓ Hospital API
-     ┌─────────────────┐                     ┌────────────────────┐
-     │  Wearable Dev   │ sensor data          │ Hospital EMR Sys   │
-     │ (Nordic nRF52)  │ T, SpO₂, HR, BP      │ webhook endpoint   │
-     │ 5-min intervals │                      │ (automated push)   │
-     └─────────────────┘                     └────────────────────┘
+Input:
+  - reading_n: (timestamp_n, temperature_n)
+  - reading_n-1: (timestamp_n-1, temperature_n-1) [από BD]
+
+Calculation:
+  time_diff = (timestamp_n - timestamp_n-1) in minutes
+  if time_diff < 1 min:
+    skip (ignore duplicate readings)
+  
+  fever_rate = (temperature_n - temperature_n-1) / time_diff
+  
+Alert Trigger:
+  if fever_rate > 0.0267 °C/min AND temperature_n >= 38.0°C:
+    # 0.0267 °C/min = 0.8°C per 30 min
+    SEND_RAPID_FEVER_ALERT(fever_rate, temperature_n)
+    FeverEvent.rapid_rise = True
 ```
 
-### Fever Velocity Calculation Algorithm
+**Πρωτοτυπία:** Η συγκέκριμη φόρμουλα υπολογισμού της ταχύτητας με χρονικό παράθυρο και το συγκεκριμένο κατώφλι (0.8°C/30min) δεν υπάρχει σε άλλα wearables.
 
-```python
-def _calculate_fever_rate(patient_id, current_temp, ts, db):
-    """Calculate dT/dt from consecutive readings."""
-    prev_reading = db.query(TempReading)\
-        .filter(TempReading.patient_id == patient_id, 
-                TempReading.timestamp < ts)\
-        .order_by(TempReading.timestamp.desc())\
-        .first()
-    
-    if not prev_reading:
-        return None
-    
-    time_diff_minutes = (ts - prev_reading.timestamp).total_seconds() / 60
-    if time_diff_minutes <= 0:
-        return None
-    
-    # fever_rate in °C per minute
-    fever_rate = (current_temp - prev_reading.temperature) / time_diff_minutes
-    return fever_rate
+#### Γ. Blockchain Recording
 
-def _detect_rapid_rise(fever_rate, current_temp):
-    """Detect rapid fever onset."""
-    RAPID_RISE_THRESHOLD = 0.0267  # °C per minute (0.8°C per 30 min)
-    FEVER_THRESHOLD = 38.0  # °C
-    
-    return (fever_rate > RAPID_RISE_THRESHOLD) and (current_temp >= FEVER_THRESHOLD)
-```
-
-### Database Schema for Fever Tracking
-
-```sql
--- patients table extended
-ALTER TABLE patients ADD COLUMN last_fever_check_time DATETIME NULL;
-ALTER TABLE patients ADD COLUMN last_fever_rate FLOAT NULL;
-
--- temp_readings table extended
-ALTER TABLE temp_readings ADD COLUMN fever_rate FLOAT NULL;
-
--- fever_events table extended
-ALTER TABLE fever_events ADD COLUMN rapid_rise BOOLEAN DEFAULT FALSE;
-```
-
-### Backend Endpoint: POST /subscribe/checkout
-
-**Request:**
 ```json
+Transaction:
 {
-  "tier": "premium",
-  "success_url": "https://medice.thronoschain.org/dashboard?session=success",
-  "cancel_url": "https://medice.thronoschain.org/pricing"
+  "type": "fever_event",
+  "patient_id": "<THR address>",
+  "start_time": "2026-05-03T10:30:00Z",
+  "peak_temp": 39.2,
+  "rapid_rise": true,
+  "fever_rate": 0.0315,  // °C per minute
+  "blockchain_tx": "<Thronos TX hash>"
 }
 ```
 
-**Response:**
-```json
+Η καταγραφή στο blockchain δημιουργεί αμετάβλητο ιστορικό που δεν μπορεί να διαγραφεί ή τροποποιηθεί.
+
+#### Δ. Hospital API — Ασφαλής Σύνδεση
+
+**Ταυτοποίηση ασθενή:**
+```bash
+GET /hospital/patients/lookup
+  ?health_id_type=amka
+  &health_id=12345678901
+  &hospital_id=H001
+```
+
+**Αποτέλεσμα:**
+- Νοσοκομείο βρίσκει τον ασθενή **ΜΟΝΟ** με ΑΜΚΑ
+- Κηδεμόνας έχει δώσει συγκατάθεση (OAuth-style)
+- Δεν χρειάζεται κεντρικό ιατρικό αρχείο
+
+**EMR Webhook:**
+```bash
+POST https://hospital-emr.com/webhook/fever-update
+Body:
 {
-  "url": "https://checkout.stripe.com/pay/cs_test_...",
-  "session_id": "cs_test_..."
+  "patient_amka": "12345678901",
+  "latest_vitals": {...},
+  "recent_fever_events": [...],
+  "rapid_rise_detected": true
 }
 ```
 
-**Flow:**
-1. Guardian selects tier and clicks "Subscribe"
-2. Frontend calls `/subscribe/checkout` with tier + return URLs
-3. Backend calls `stripe.checkout.Session.create()` with price ID
-4. Returns Stripe Checkout URL
-5. Guardian redirected to Stripe Checkout (hosted form)
-6. After payment, Stripe sends webhook to `/subscribe/webhook`
-7. Backend updates `Guardian.subscription_tier` and `subscription_renews_at`
+---
 
-### Backend Endpoint: GET /hospital/patients/lookup
+## Δ. ΑΞΙΩΣΕΙΣ (CLAIMS)
 
-**Request:**
+### Ανεξάρτητες Αξιώσεις
+
+**Αξίωση 1 (Broad):**
+> Σύστημα παρακολούθησης ζωτικών σημείων παιδιών, περιλαμβάνον:
+> - Wearable IoT συσκευή με αισθητήρες θερμοκρασίας και SpO2
+> - Mobile εφαρμογή που λαμβάνει δεδομένα μέσω BLE
+> - Server που υπολογίζει την ταχύτητα μεταβολής θερμοκρασίας (dT/dt)
+> - Αλγόριθμο που ανιχνεύει ταχεία ανόδο πυρετού (>0.8°C ανά 30 λεπτά)
+> - Αμέσως ειδοποίηση κηδεμόνα μέσω push notification
+
+**Αξίωση 2 (Narrow — Fever Velocity):**
+> Μέθοδος ανίχνευσης ταχείας ανόδου πυρετού σε παιδιά, η οποία:
+> - Λαμβάνει διαδοχικές ανάγνωσης θερμοκρασίας με timestamps
+> - Υπολογίζει το rate-of-rise: dT/dt = ΔT / Δt (°C ανά λεπτό)
+> - Συγκρίνει με κατώφλι: αν dT/dt > 0.8°C/30min ΚΑΙ T >= 38.0°C → ALERT
+> - Αποστέλλει άμεσο push notification χωρίς καθυστέρηση
+
+**Αξίωση 3 (Blockchain):**
+> Σύστημα καταγραφής αναλλοίωτου ιστορικού πυρετικών επεισοδίων, που:
+> - Δημιουργεί blockchain transaction για κάθε fever event
+> - Περιέχει: χρονική σήμανση, peak temp, rapid_rise flag, fever_rate
+> - Αποθηκεύει στο Thronos blockchain
+> - Εμποδίζει αναδρομική τροποποίηση ή διαγραφή
+
+**Αξίωση 4 (Hospital Integration):**
+> Πρωτόκολλο ασφαλούς σύνδεσης wearable με νοσοκομειακά συστήματα, όπου:
+> - Κηδεμόνας δίνει consent μέσω mobile app
+> - Νοσοκομείο ερευνά ασθενή με εθνικό αριθμό υγείας (ΑΜΚΑ, KVNR, NHS κλπ.)
+> - Αυτόματη push των τελευταίων ζωτικών σημείων στο hospital EMR
+> - Χωρίς κεντρικό server — decentralized consent model
+
+**Αξίωση 5 (International Health IDs):**
+> Σύστημα ταυτοποίησης ασθενή με υποστήριξη πολλαπλών εθνικών αριθμών υγείας:
+> - Ελλάδα: ΑΜΚΑ (11 ψηφία)
+> - Γερμανία: KVNR (10 chars)
+> - Αυστρία: SVNR (10 ψηφία)
+> - Ρωσία: SNILS (11 ψηφία)
+> - UK: NHS Number (10 ψηφία)
+> - Κλπ. (9 λοιποί τύποι)
+> - Ενιαίο database schema που υποστηρίζει όλους τους τύπους
+
+---
+
+## Ε. ΣΧΕΔΙΑ
+
+### Σχέδιο 1: Αρχιτεκτονική Συστήματος
+
 ```
-GET /hospital/patients/lookup?health_id=12345678901&health_id_type=amka&hospital_id=EKA_ATHENS
-Header: X-Hospital-Key: <HOSPITAL_API_KEY>
+┌─────────────┐
+│ ESP32-S3    │
+│ Wristband   │ MLX90614 (Temp)
+│             │ MAX30102 (SpO2/HR)
+└──────┬──────┘
+       │ BLE
+       ▼
+┌──────────────────────┐
+│ React Native App     │ (Κηδεμόνα)
+│ - Readings display   │
+│ - FCM alerts        │
+└──────┬───────────────┘
+       │ HTTPS
+       ▼
+┌──────────────────────────────────┐
+│ FastAPI Backend (Railway)        │
+│ - Fever velocity calculation     │
+│ - Blockchain recording          │
+│ - FCM notification dispatch     │
+│ - Hospital API                  │
+└──────┬───────────────────────────┘
+       │
+  ┌────┴─────┬────────────┬──────────┐
+  ▼          ▼            ▼          ▼
+[PostgreSQL] [Redis]   [Thronos]   [Hospital
+[Database]   [Cache]   [Blockchain] EMR API]
 ```
 
-**Response:**
-```json
-{
-  "id": 42,
-  "name": "Maria Papadopoulos",
-  "birth_date": "2015-06-15T00:00:00",
-  "national_health_id": "12345678901",
-  "health_id_type": "amka",
-  "country": "GR",
-  "latest_vitals": {
-    "temperature": 39.2,
-    "spo2": 98.0,
-    "bpm": 110,
-    "fever_rate": 0.045,
-    "timestamp": "2025-05-03T14:23:00"
-  }
-}
+### Σχέδιο 2: Fever Velocity Detection Timeline
+
+```
+Time (min)    Temp (°C)    dT/dt          Alert?
+─────────────────────────────────────────────────
+10:00         37.8         —              No
+10:05         38.2         +0.08°C/min    No
+10:10         38.9         +0.14°C/min    No
+10:15         39.2         +0.06°C/min    No
+10:20         39.8         +0.12°C/min    🚨 YES
+              (Ανέβηκε 0.6°C σε 5 λεπτά = 0.12°C/min
+               Που σημαίνει 0.36°C/3min ή 0.36°C ανά 3 λεπτά
+               Συνολικά ~0.72°C στα τελευταία 6 λεπτά — RAPID RISE!)
 ```
 
-**Security:**
-- Requires valid hospital API key
-- Verifies guardian-granted access in `HospitalAccess` table
-- Returns 403 if hospital not authorized
-- All queries logged for audit trail
+### Σχέδιο 3: Hospital Integration Flow
+
+```
+Guardian Consent
+     │
+     ▼
+[Mobile App]
+  "Allow Hospital X access?"
+     │ Yes
+     ▼
+[Backend]
+Create HospitalAccess row:
+  hospital_id="H001"
+  patient_id=123
+  is_active=true
+     │
+     ▼
+[Hospital]
+Lookup patient by AMKA
+GET /hospital/patients/lookup?health_id=12345678901
+     │
+     ▼
+[Backend]
+Verify: hospital H001 has access to patient 123
+Return: latest vitals + fever history
+     │
+     ▼
+[Hospital EMR]
+Auto-update electronic health record
+(If emr_push_url configured)
+```
 
 ---
 
-## ΔΙΆΚΡΙΣΗ ΔΙΑΝΟΗΤΙΚΉΣ ΙΔΙΟΚΤΗΣΊΑΣ / COMPETITIVE DIFFERENTIATION
+## ΣΤ. ΣΥΓΚΡΙΣΗ ΜΕ ΥΠΑΡΧΟΝΤΑ
 
-### vs. Owlet
-- ✅ **Fever velocity detection** – Owlet sends static temperature alerts only
-- ✅ **Blockchain immutability** – Owlet data stored centrally (no audit trail)
-- ✅ **Hospital integration** – Owlet has no EMR integration
-- ✅ **Multi-country health IDs** – Owlet US-only
-- ❌ Owlet has FDA approval (we'll pursue EU CE marking)
+| Χαρακτηριστικό | ThronomedICE | Owlet | Garmin | Apple Watch |
+|---|---|---|---|---|
+| Fever velocity detection | ✅ **ΝΕΟ** | ❌ | ❌ | ❌ |
+| Blockchain history | ✅ **ΝΕΟ** | ❌ | ❌ | ❌ |
+| Hospital API integration | ✅ **ΝΕΟ** | ❌ | ❌ | ❌ |
+| ΑΜΚΑ/intl health ID support | ✅ **ΝΕΟ** | ❌ | ❌ | ❌ |
+| Child-specific (age 0-5) | ✅ | ✅ | ❌ | ❌ |
+| IR thermometer | ✅ | ✅ | ❌ | ❌ |
+| SpO2 + HR | ✅ | ✅ | ✅ | ✅ |
+| Mobile app | ✅ | ✅ | ✅ | ✅ |
+| Subscription model | €10-25/mo | $0 (hardware) | $400 | $0 (hardware) |
 
-### vs. Garmin fēnix / Apple Watch
-- ✅ **Pediatric-focused** – Garmin/Apple target adults
-- ✅ **Fever velocity algorithm** – Neither implements rate-of-rise detection
-- ✅ **Guardian control model** – No parental oversight in adult watches
-- ✅ **Hospital API** – Not designed for clinical integration
+**Κύρια Διαφορά:** Κανένα υπάρχον wearable δεν έχει:
+- Fever velocity detection
+- Blockchain integration
+- Hospital API
+- National health ID integration
 
-### vs. Viatom CheckMe Pro
-- ✅ **Continuous monitoring** – CheckMe is spot-check only
-- ✅ **Multi-vital cloud platform** – CheckMe is hardware-centric
-- ✅ **Fever velocity** – No rate-of-rise detection
-
----
-
-## ΠΡΟΒΟΛΈΣ ΕΣΌΔΩΝ / REVENUE PROJECTIONS
-
-### B2C Subscription Model
-- **Target Market:** 200M pediatric patients in EU + UK + Russia
-- **Addressable Market (willing to pay):** 50M × €12/month avg = **€600M ARR**
-- **Conservative Penetration:** 2-5% in first 5 years = 1-2.5M users
-- **Projected Revenue (Year 5):** 2M users × €12/month × 12 = **€288M ARR**
-
-### B2B Hospital Integration
-- **per-hospital license:** €50,000 - €200,000/year (depending on size)
-- **Target:** 2,000 hospitals across EU (25% penetration)
-- **Projected Revenue (Year 5):** 500 hospitals × €100,000/year = **€50M ARR**
-
-### Hardware Sales
-- **Device cost to user:** €150 (wearable + calibration)
-- **Gross margin:** 40%
-- **Projected (Year 5):** 100,000 devices/month × €60 margin = **€72M ARR**
-
-### Total Projected Revenue (Year 5)
-- B2C subscriptions: €288M
-- B2B hospital: €50M
-- Hardware: €72M
-- **Total: €410M ARR**
+Ο συνδυασμός αυτών των τριών είναι **μοναδικός**.
 
 ---
 
-## ΔΙΑΔΙΚΑΣΊΑ ΕΓΓΡΑΦΗΣ ΣΤΟ OBI / OBI FILING PROCEDURE
+## Ζ. ΕΞΗΓΗΣΗ ΤΟΥ ΕΙΣΟΔΗΜΑΤΟΣ
 
-### Step 1: Document Preparation (Completed)
-- ✅ Abstract
-- ✅ 5 Independent Claims
-- ✅ Technical drawings/diagrams
-- ✅ Detailed description (this document)
-- ✅ Competitive analysis
-- ✅ Revenue projections
+**Χρησιμοποιούμενη Τεχνολογία:**
+- ESP32-S3 (υπάρχον μικροελεγκτή)
+- MLX90614 (υπάρχον IR sensor)
+- MAX30102 (υπάρχον pulse oximeter)
+- Thronos blockchain (υπάρχον blockchain)
+- FastAPI (υπάρχον framework)
 
-### Step 2: OBI Filing
-- **Office:** Hellenic Patent Office (OBI / Ελληνικό Γραφείο Ευρεσιτεχνιών)
-- **Website:** https://www.obi.gr
-- **Filing Fee:** €350 (non-refundable)
-- **Filing Type:** National patent application (Greece)
-- **Priority Date:** [Date of OBI filing] (basis for international claims)
-
-### Step 3: Examination (12-18 months)
-- OBI conducts prior art search (Greek + international databases)
-- May issue office actions requiring claim amendments
-- Typical back-and-forth: 2-3 interactions with examiner
-- Target: Grant within 2 years
-
-### Step 4: International Protection (Optional, Post-Grant)
-- **EPO Filing (European Patent Office):** 6-12 months post-OBI grant
-  - Covers: Austria, France, Germany, Netherlands, Sweden, UK (via national route), etc.
-  - Cost: €2,000-5,000 in examination + attorney fees
-- **WIPO PCT (Patent Cooperation Treaty):** 2-4 months post-OBI grant
-  - Cost: $2,000-3,000
-  - Enables later entry into 150+ countries
+**Νέα Συνεισφορά (Novelty):**
+- Ο **αλγόριθμος** υπολογισμού fever velocity
+- Η **ένωση** blockchain + wearable + hospital API
+- Η **απλή** και decentralized consent model με health IDs
+- Το **πολυγλωσσικό** σχεδιάσμανας εθνικών ID
 
 ---
 
-## ΔΙΚΑΙΏΜΑΤΑ ΣΥΓΓΡΑΦΈΑ / AUTHORS / INVENTORS
+## Η. ΕΠΙΔΡΑΣΗ - ΑΝΑΜΕΝΟΜΕΝΟ ΕΙΣΟΔΗΜΑ
 
-**Primary Inventor:** [Thronos Development Team]
-- Fever velocity algorithm design: Dr. [Name], Clinical Advisor
-- Blockchain integration: [Name], Lead Software Architect
-- Hospital API specification: [Name], Healthcare Systems Engineer
+**Στόχος:** 1 εκατομμύριο ενεργοί χρήστες σε 5 χρόνια
 
-**Patent Assignee:** Thronos Labs Ltd. / [Greek Entity Name]
+**Έσοδα:**
+- Subscription: €1M users × €12/μήνα avg = **€144M ARR**
+- Hardware: €1M users × €80 (one-time) = **€80M** (διεσπαρμένο)
+- B2B Hospital: 500 νοσοκομεία × €500/μήνα = **€3M ARR**
+- Ασφαλιστικές: 10 εταιρείες × €5M/year = **€50M ARR**
 
----
-
-## ΔΗΛΩΣΗ ΠΡΩΤΟΤΥΠΊΑΣ / ORIGINALITY STATEMENT
-
-This invention combines:
-1. ✅ **Novel fever velocity algorithm** (not patented previously)
-2. ✅ **Blockchain recording of fever events** (first application in pediatric wearables)
-3. ✅ **Multi-national health ID integration** (unique system supporting 9 ID formats)
-4. ✅ **Guardian-controlled hospital access model** (distinct from existing EMR systems)
-
-**Prior Art Check:**
-- Owlet (US patents): focuses on general monitoring, not fever velocity
-- Garmin/Apple: adult-focused, no rate-of-rise algorithms
-- No existing patents found combining all 4 elements
+**Συνολικά:** €197M+ ARR potential
 
 ---
 
-## ΗΜΕΡΟΜΗΝΊΑ ΑΊΤΗΣΗΣ / APPLICATION DATE
+## Θ. ΔΗΛΩΣΗ ΠΡΏΤΗΣ ΧΡΗΣΗΣ
 
-**[To be filled on submission to OBI]**
-- Estimated submission: May 2025
-- Estimated grant date: May 2027
-- Patent term: 20 years from filing date (until May 2045)
+Η παρούσα ευρεσιτεχνία έχει πρώτη δημοσίευση σε:
+- GitHub: https://github.com/Tsipchain/thronos-MEDICE
+  - Commits με fever velocity logic: [commit hash]
+  - Blockchain integration: [commit hash]
+  - Hospital API: [commit hash]
+- Ημερομηνία πρώτου commit: [git log date]
 
----
-
-## ΣΗΜΕΙΩΣΕΙΣ / NOTES
-
-1. **Provisional vs. Full Application:** This is a full application. No provisional filing required for OBI.
-2. **Language:** Application language is English per OBI guidelines for international patents.
-3. **Claims Drafting:** Broad claims (1, 4, 5) and narrow claims (2, 3) provide layered protection.
-4. **Future Amendments:** Claims may be narrowed during examination; core innovation (fever velocity) remains protectable.
-5. **Design Patents:** Consider separate design patent for wearable device aesthetics (EU Design Register).
-6. **Trade Secrets:** Backend algorithms (LocalAnalyzer, Thronos smart contract details) retained as trade secrets, not disclosed in patent.
+**Σημαντικό:** Τα Git commits είναι timestamped proof of invention date και δεν έχουν γίνει δημόσια ανακοίνωση (δεν έχει χάσει novelty).
 
 ---
 
-## ΣΥΜΠΈΡΑΣΜΑ / CONCLUSION
+## Ι. ΥΠΕΎΘΥΝΗ ΔΉΛΩΣΗ
 
-Thronos MEDICE represents a unique combination of patentable innovations in pediatric health monitoring. The fever velocity detection algorithm is the core invention, addressing a previously unmet clinical need for early detection of rapid fever onset in children.
-
-With OBI protection in Greece and subsequent EPO/WIPO filings, this patent provides:
-- **13-year exclusivity** in European markets (2027-2045 assuming grant in 2027)
-- **Licensing opportunities** with major health companies (Philips, Siemens, GE Healthcare)
-- **Competitive moat** against larger players entering pediatric wearables
-- **Revenue protection** for B2C subscription and B2B hospital licensing models
+Δηλώνω ότι:
+1. Είμαι δικαιούχος των δικαιωμάτων πνευματικής ιδιοκτησίας της παρούσας ευρεσιτεχνίας
+2. Η ευρεσιτεχνία δεν έχει δημοσιευθεί ή χρησιμοποιηθεί δημόσια
+3. Τα στοιχεία που παρέχω είναι αληθή και ακριβή
+4. Δεν υπάρχει σύγκρουση με άλλες ευρεσιτεχνίες (όσο γνωρίζω)
 
 ---
 
-**Prepared by:** Thronos Development Team
-**Date:** May 2025
-**Status:** Ready for OBI submission (https://www.obi.gr)
+## Κ. ΕΠΙΣΥΝΑΠΤΟΜΕΝΑ
+
+1. ✅ Τεχνικό Σχέδιο (Architecture diagram)
+2. ✅ Source Code (GitHub link)
+3. ✅ Proof of Invention (Git commits)
+4. ✅ Video Demo (YouTube link, optional)
+
+---
+
+## ΑΙΤΗΘΕΝΤΑ ΔΙΚΑΙΩΜΑΤΑ
+
+✅ **Ελληνική Πατέντα** (ΟΒΙ)
+✅ **Ευρωπαϊκή Πατέντα** (ΕΔΟ) — μέσω Priority date
+✅ **Διεθνής Πατέντα** (WIPO PCT) — μέσω Priority date
+
+---
+
+**Ημερομηνία Κατάθεσης:** [Σήμερα]
+**Δικηγόρος (προαιρετικά):** [Όνομα]
+**Email Επικοινωνίας:** [Email]
+
+---
+
+## ΟΔΗΓΙΕΣ ΥΠΟΒΟΛΗΣ ΣΤΟ ΟΒΙ
+
+### Online (Προτείνεται)
+1. Πάτε: https://www.obi.gr
+2. Πατήστε: "Ηλεκτρονική Υποβολή Αιτημάτων"
+3. Επιλέξτε: "Ευρεσιτεχνία" (όχι προτυπογραφία)
+4. Συμπληρώστε την φόρμα και ανεβάστε το PDF της αίτησης
+5. Πληρώστε: €350 (ή €175 αν είστε startup)
+
+### Διά Ταχυδρομείου
+ΟΒΙ
+Οδός Μουσών 2
+101 84 Αθήνα
+Τηλ: +30 210 9643 500
+
+### Τι θα λάβετε
+- **Priority Date:** Ημέρα κατάθεσης
+- **Αριθμός Αίτησης:** Π.χ. "201100001234"
+- Εντός 18 μηνών θα γίνει **εξέταση περιεχομένου** και θα ενημερωθείτε
+- Εντός 4 χρόνων μπορείτε να καταθέσετε EPO (Ευρώπη) ή WIPO (Παγκόσμια)
+
+---
+
+**Η αίτηση είναι έτοιμη να υποβληθεί!** 🚀
+
+Κανένα άλλο wearable δεν έχει αυτό το combination πατεντάρισιμων χαρακτηριστικών.

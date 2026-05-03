@@ -10,10 +10,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(base() + path, { ...init, cache: 'no-store' });
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
-    try {
-      const body = await res.json();
-      if (body.detail) msg = body.detail;
-    } catch {}
+    try { const j = await res.json(); msg = j.detail || msg; } catch {}
     throw new Error(msg);
   }
   return res.json();
@@ -21,6 +18,8 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const getVitals       = (id: number) => req<any>(`/patients/${id}/vitals`);
 export const getFeverHistory = (id: number) => req<any[]>(`/patients/${id}/fever-history`);
+export const getPatientPlan  = (id: number) => req<any>(`/patients/${id}/plan`);
+export const getSubscription = (id: number) => req<any>(`/guardian/${id}/subscription`);
 
 export const createGuardian = (name: string, email: string, password: string) =>
   req<{ id: number }>('/guardians', {
@@ -30,7 +29,7 @@ export const createGuardian = (name: string, email: string, password: string) =>
   });
 
 export const login = (email: string, password: string) =>
-  req<any>('/login', {
+  req<{ guardian_id: number; name: string; email: string; patients: any[] }>('/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
@@ -38,13 +37,20 @@ export const login = (email: string, password: string) =>
 
 export const createPatient = (data: {
   name: string; birth_date?: string;
-  guardian_id: number; subscription?: string; free_until?: string;
+  guardian_id: number; subscription: string; free_until?: string;
   national_health_id?: string; national_health_id_type?: string; country?: string;
 }) =>
   req<{ id: number }>('/patients', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
+  });
+
+export const createCheckoutSession = (guardian_id: number, tier: string, success_url: string, cancel_url: string) =>
+  req<{ checkout_url: string }>('/subscribe/checkout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ guardian_id, tier, success_url, cancel_url }),
   });
 
 export const simulate = (data: {
@@ -56,16 +62,3 @@ export const simulate = (data: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-
-export const createCheckoutSession = (tier: string, success_url: string, cancel_url: string) =>
-  req<{ url: string; session_id: string }>('/subscribe/checkout', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tier, success_url, cancel_url }),
-  });
-
-export const getSubscription = (guardian_id: number) =>
-  req<any>(`/guardian/${guardian_id}/subscription`);
-
-export const getPatientPlan = (patient_id: number) =>
-  req<any>(`/patients/${patient_id}/plan`);

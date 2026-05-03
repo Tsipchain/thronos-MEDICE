@@ -1,8 +1,8 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import secrets
 import os
@@ -11,7 +11,8 @@ import stripe
 from models import (
     Base, Guardian, Patient, TempReading, FeverEvent,
     TempReadingIn, PatientCreate, GuardianCreate, GuardianLogin,
-    FeverEventOut, SimulateIn, StripeCheckoutRequest, StripeWebhookRequest,
+    FeverEventOut, SimulateIn, HEALTH_ID_TYPES,
+    StripeCheckoutRequest,
 )
 from local_analyzer import LocalAnalyzer
 from notifications import (
@@ -26,40 +27,25 @@ from thronos_integration import router as thronos_router
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-# SQLite on the Railway volume — no external DB needed
 DB_URL = os.getenv("DATABASE_URL", "sqlite:////medice/medice.db")
+STRIPE_API_KEY = os.getenv("STRIPE_API_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+
+if STRIPE_API_KEY:
+    stripe.api_key = STRIPE_API_KEY
+
+# Stripe product IDs (set in Stripe dashboard)
+STRIPE_PRODUCTS = {
+    "basic": os.getenv("STRIPE_PRODUCT_BASIC", "price_basic"),
+    "premium": os.getenv("STRIPE_PRODUCT_PREMIUM", "price_premium"),
+    "family": os.getenv("STRIPE_PRODUCT_FAMILY", "price_family"),
+}
 
 _connect_args = {"check_same_thread": False} if DB_URL.startswith("sqlite") else {}
 engine       = create_engine(DB_URL, connect_args=_connect_args)
 SessionLocal = sessionmaker(bind=engine)
 
 analyzer = LocalAnalyzer()
-
-stripe.api_key = os.getenv("STRIPE_API_KEY", "")
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
-STRIPE_PRODUCT_BASIC = os.getenv("STRIPE_PRODUCT_BASIC", "")
-STRIPE_PRODUCT_PREMIUM = os.getenv("STRIPE_PRODUCT_PREMIUM", "")
-STRIPE_PRODUCT_FAMILY = os.getenv("STRIPE_PRODUCT_FAMILY", "")
-
-
-def _calculate_fever_rate(patient_id: str, current_temp: float, ts: datetime, db: Session) -> float | None:
-    """Calculate fever rate (°C per minute) from last reading."""
-    prev_reading = (
-        db.query(TempReading)
-        .filter(TempReading.patient_id == int(patient_id), TempReading.timestamp < ts)
-        .order_by(TempReading.timestamp.desc())
-        .first()
-    )
-    if not prev_reading:
-        return None
-
-    time_diff = (ts - prev_reading.timestamp).total_seconds() / 60  # minutes
-    if time_diff <= 0:
-        return None
-
-    temp_diff = current_temp - prev_reading.temperature
-    fever_rate = temp_diff / time_diff
-    return fever_rate
 
 
 def _hash_password(password: str) -> str:
@@ -83,7 +69,7 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(engine)
     yield
 
-app = FastAPI(title="ThronomedICE Vital Signs API", version="2.0", lifespan=lifespan)
+app = FastAPI(title="ThronomedICE Vital Signs API", version="2.1", lifespan=lifespan)
 
 _CORS_ORIGINS = [
     o.strip()
@@ -115,6 +101,30 @@ def get_db():
         db.close()
 
 
+def _calculate_fever_rate(patient_id: int, current_temp: float, db: Session) -> float | None:
+    """
+    Calculate fever rate (°C per minute) based on last reading.
+    Returns rate or None if no previous reading.
+    """
+    prev_reading = (
+        db.query(TempReading)
+        .filter(TempReading.patient_id == patient_id)
+        .order_by(TempReading.timestamp.desc())
+        .offset(1)  # Skip current
+        .first()
+    )
+    if not prev_reading:
+        return None
+    
+    now = datetime.utcnow()
+    time_diff = (now - prev_reading.timestamp).total_seconds() / 60.0  # minutes
+    if time_diff < 1:  # Ignore if < 1 min apart
+        return None
+    
+    rate = (current_temp - prev_reading.temperature) / time_diff
+    return rate
+
+
 async def _process_vitals(
     patient_id: str,
     reading: TempReadingIn,
@@ -124,15 +134,11 @@ async def _process_vitals(
     patient,
     save_to_db: bool = True,
 ) -> dict:
-    """Shared logic for /readings and /simulate."""
-
-    fever_rate = None
-    rapid_rise = False
     if save_to_db and patient:
-        fever_rate = _calculate_fever_rate(patient_id, reading.temperature, ts, db)
-        rapid_rise = fever_rate is not None and fever_rate > 0.0267 and reading.temperature >= 38.0
-
-        temp_reading = TempReading(
+        # Calculate fever rate before saving
+        fever_rate = _calculate_fever_rate(patient.id, reading.temperature, db)
+        
+        db.add(TempReading(
             patient_id  = patient.id,
             device_id   = reading.device_id,
             temperature = reading.temperature,
@@ -145,13 +151,13 @@ async def _process_vitals(
             bp_valid    = reading.bp_valid    or False,
             fever_rate  = fever_rate,
             timestamp   = ts,
-        )
-        db.add(temp_reading)
+        ))
         db.commit()
-
         patient.last_fever_check_time = ts
         patient.last_fever_rate = fever_rate
         db.commit()
+    else:
+        fever_rate = None
 
     t_result = await analyzer.analyze_temp(patient_id, reading.temperature, ts)
     v_result = await analyzer.analyze_vitals(
@@ -162,11 +168,14 @@ async def _process_vitals(
         reading.bp_valid  or False,
     )
 
-    if fcm_token:
-        if rapid_rise and fever_rate:
-            await send_rapid_fever_alert(fcm_token, reading.temperature, fever_rate)
+    # Check for rapid fever rise (>0.8°C per 30 min = 0.0267°C per min)
+    rapid_rise = fever_rate and fever_rate > 0.0267 and reading.temperature >= 38.0
 
-        if t_result["send_fever_alert"]:
+    if fcm_token:
+        # Rapid fever alert (highest priority)
+        if rapid_rise:
+            await send_rapid_fever_alert(fcm_token, reading.temperature, fever_rate)
+        elif t_result["send_fever_alert"]:
             if t_result["fever_level"] == "high_fever":
                 await send_high_fever_alert(fcm_token, reading.temperature)
             else:
@@ -191,7 +200,7 @@ async def _process_vitals(
                 patient_id=patient.id,
                 start_time=ts,
                 peak_temp=reading.temperature,
-                rapid_rise=rapid_rise
+                rapid_rise=bool(rapid_rise),
             )
             db.add(event)
             db.commit()
@@ -221,6 +230,8 @@ async def _process_vitals(
     return {
         "status":          "ok",
         "fever_level":     t_result["fever_level"],
+        "fever_rate":      fever_rate,
+        "rapid_rise":      rapid_rise,
         "spo2_level":      v_result["spo2_level"],
         "hr_level":        v_result["hr_level"],
         "bp_level":        v_result["bp_level"],
@@ -246,7 +257,6 @@ async def post_reading(reading: TempReadingIn, db: Session = Depends(get_db)):
 
 @app.post("/simulate", response_model=dict)
 async def simulate(body: SimulateIn, db: Session = Depends(get_db)):
-    """Test vitals analysis without a registered patient or physical device."""
     reading = TempReadingIn(
         patient_id  = "0",
         device_id   = "simulator",
@@ -279,6 +289,7 @@ def current_vitals(patient_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "No readings yet")
     return {
         "temperature": reading.temperature,
+        "fever_rate": reading.fever_rate,
         "spo2":        reading.spo2,
         "bpm":         reading.bpm,
         "systolic":    reading.systolic,
@@ -294,6 +305,35 @@ def current_vitals(patient_id: int, db: Session = Depends(get_db)):
 def fever_history(patient_id: int, db: Session = Depends(get_db)):
     return db.query(FeverEvent).filter(FeverEvent.patient_id == patient_id)\
              .order_by(FeverEvent.start_time.desc()).all()
+
+
+@app.get("/patients/{patient_id}/plan")
+def patient_plan(patient_id: int, db: Session = Depends(get_db)):
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(404, "Patient not found")
+
+    now = datetime.utcnow()
+    in_trial  = bool(patient.free_until and now < patient.free_until)
+    days_left = max(0, (patient.free_until - now).days) if in_trial else 0
+
+    health_id_label = None
+    if patient.national_health_id_type:
+        info = HEALTH_ID_TYPES.get(patient.national_health_id_type, {})
+        health_id_label = info.get("label", patient.national_health_id_type.upper())
+
+    return {
+        "patient_id":    patient.id,
+        "name":          patient.name,
+        "subscription":  patient.subscription,
+        "in_trial":      in_trial,
+        "trial_days_left": days_left,
+        "bp_enabled":    patient.bp_subscription,
+        "national_health_id":      patient.national_health_id,
+        "national_health_id_type": patient.national_health_id_type,
+        "health_id_label":         health_id_label,
+        "country":       patient.country,
+    }
 
 
 @app.put("/fever-events/{event_id}/antipyretic")
@@ -316,6 +356,8 @@ def create_guardian(g: GuardianCreate, db: Session = Depends(get_db)):
         name          = g.name,
         email         = g.email,
         password_hash = _hash_password(g.password),
+        subscription_tier = "free",
+        subscription_status = "active",
     )
     db.add(guardian)
     db.commit()
@@ -329,21 +371,44 @@ def login(body: GuardianLogin, db: Session = Depends(get_db)):
         raise HTTPException(401, "Invalid email or password")
     if not _verify_password(body.password, guardian.password_hash):
         raise HTTPException(401, "Invalid email or password")
-    patients = [
-        {"id": p.id, "name": p.name}
-        for p in guardian.patients
-    ]
+
+    now = datetime.utcnow()
+    patients = []
+    for p in guardian.patients:
+        in_trial  = bool(p.free_until and now < p.free_until)
+        days_left = max(0, (p.free_until - now).days) if in_trial else 0
+        patients.append({
+            "id":           p.id,
+            "name":         p.name,
+            "subscription": p.subscription,
+            "in_trial":     in_trial,
+            "trial_days_left": days_left,
+            "bp_enabled":   p.bp_subscription,
+        })
+
     return {
         "guardian_id": guardian.id,
         "name":        guardian.name,
         "email":       guardian.email,
+        "subscription_tier": guardian.subscription_tier,
+        "subscription_status": guardian.subscription_status,
+        "trial_ends_at": guardian.trial_ends_at.isoformat() if guardian.trial_ends_at else None,
         "patients":    patients,
     }
 
 
 @app.post("/patients", response_model=dict)
 def create_patient(p: PatientCreate, db: Session = Depends(get_db)):
-    patient = Patient(name=p.name, birth_date=p.birth_date, guardian_id=p.guardian_id)
+    patient = Patient(
+        name                    = p.name,
+        birth_date              = p.birth_date,
+        guardian_id             = p.guardian_id,
+        subscription            = p.subscription or "basic",
+        free_until              = p.free_until,
+        national_health_id      = p.national_health_id,
+        national_health_id_type = p.national_health_id_type,
+        country                 = p.country or "GR",
+    )
     db.add(patient)
     db.commit()
     return {"id": patient.id}
@@ -359,95 +424,117 @@ def register_fcm(patient_id: int, body: dict, db: Session = Depends(get_db)):
     return {"status": "ok"}
 
 
-@app.post("/subscribe/checkout", response_model=dict)
-async def create_checkout(req: StripeCheckoutRequest, db: Session = Depends(get_db)):
-    """Create Stripe Checkout session for subscription."""
-    if not stripe.api_key:
+# ──── STRIPE SUBSCRIPTION ────────────────────────────────────────────────────────
+
+@app.post("/subscribe/checkout")
+def create_checkout_session(req: StripeCheckoutRequest, body: dict, db: Session = Depends(get_db)):
+    """
+    Create a Stripe Checkout session. Expects: {"guardian_id": int}
+    Returns: {"checkout_url": "https://checkout.stripe.com/..."}
+    """
+    if not STRIPE_API_KEY:
         raise HTTPException(500, "Stripe not configured")
-
-    tier_to_product = {
-        "basic":   STRIPE_PRODUCT_BASIC,
-        "premium": STRIPE_PRODUCT_PREMIUM,
-        "family":  STRIPE_PRODUCT_FAMILY,
-    }
-    product_id = tier_to_product.get(req.tier)
-    if not product_id:
-        raise HTTPException(400, "Invalid tier")
-
-    session = stripe.checkout.Session.create(
-        payment_method_types=["card"],
-        line_items=[{"price": product_id, "quantity": 1}],
-        mode="subscription",
-        success_url=req.success_url,
-        cancel_url=req.cancel_url,
-    )
-    return {"url": session.url, "session_id": session.id}
-
-
-@app.post("/subscribe/webhook", response_model=dict)
-async def stripe_webhook(req: StripeWebhookRequest, db: Session = Depends(get_db)):
-    """Handle Stripe webhook events."""
-    if not STRIPE_WEBHOOK_SECRET:
-        return {"status": "ok"}
-
-    event_type = req.type
-    if event_type == "customer.subscription.updated":
-        subscription_id = req.data.get("id")
-        status = req.data.get("status")
-        customer_id = req.data.get("customer")
-
-        guardian = db.query(Guardian).filter(
-            Guardian.stripe_subscription_id == subscription_id
-        ).first()
-        if guardian:
-            guardian.subscription_status = "active" if status == "active" else "inactive"
-            db.commit()
-
-    elif event_type == "customer.subscription.deleted":
-        subscription_id = req.data.get("id")
-        guardian = db.query(Guardian).filter(
-            Guardian.stripe_subscription_id == subscription_id
-        ).first()
-        if guardian:
-            guardian.subscription_status = "cancelled"
-            db.commit()
-
-    return {"status": "ok"}
-
-
-@app.get("/guardian/{guardian_id}/subscription", response_model=dict)
-async def get_subscription(guardian_id: int, db: Session = Depends(get_db)):
-    """Get guardian's subscription status."""
+    
+    guardian_id = body.get("guardian_id")
+    if not guardian_id:
+        raise HTTPException(400, "guardian_id required")
+    
     guardian = db.query(Guardian).filter(Guardian.id == guardian_id).first()
     if not guardian:
         raise HTTPException(404, "Guardian not found")
+    
+    if req.tier not in STRIPE_PRODUCTS:
+        raise HTTPException(400, f"Invalid tier. Allowed: {list(STRIPE_PRODUCTS.keys())}")
+    
+    try:
+        # Create or get Stripe customer
+        if not guardian.stripe_customer_id:
+            customer = stripe.Customer.create(
+                email=guardian.email,
+                name=guardian.name,
+            )
+            guardian.stripe_customer_id = customer.id
+            db.commit()
+        
+        # Create checkout session
+        session = stripe.checkout.Session.create(
+            customer=guardian.stripe_customer_id,
+            payment_method_types=["card"],
+            line_items=[
+                {"price": STRIPE_PRODUCTS[req.tier], "quantity": 1}
+            ],
+            mode="subscription",
+            success_url=req.success_url,
+            cancel_url=req.cancel_url,
+        )
+        return {"checkout_url": session.url}
+    except stripe.error.StripeError as e:
+        raise HTTPException(400, f"Stripe error: {e.message}")
 
+
+@app.post("/subscribe/webhook")
+async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+    """
+    Stripe webhook handler for subscription events.
+    """
+    if not STRIPE_WEBHOOK_SECRET:
+        raise HTTPException(500, "Webhook secret not configured")
+    
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+    
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, STRIPE_WEBHOOK_SECRET
+        )
+    except ValueError:
+        raise HTTPException(400, "Invalid payload")
+    except stripe.error.SignatureVerificationError:
+        raise HTTPException(400, "Invalid signature")
+    
+    # Handle subscription events
+    if event["type"] == "customer.subscription.updated":
+        sub = event["data"]["object"]
+        customer_id = sub["customer"]
+        guardian = db.query(Guardian).filter(
+            Guardian.stripe_customer_id == customer_id
+        ).first()
+        if guardian:
+            guardian.stripe_subscription_id = sub["id"]
+            guardian.subscription_status = "active" if sub["status"] == "active" else "cancelled"
+            if sub.get("trial_end"):
+                guardian.trial_ends_at = datetime.fromtimestamp(sub["trial_end"])
+            db.commit()
+    
+    elif event["type"] == "customer.subscription.deleted":
+        sub = event["data"]["object"]
+        customer_id = sub["customer"]
+        guardian = db.query(Guardian).filter(
+            Guardian.stripe_customer_id == customer_id
+        ).first()
+        if guardian:
+            guardian.subscription_status = "cancelled"
+            guardian.stripe_subscription_id = None
+            db.commit()
+    
+    return {"status": "ok"}
+
+
+@app.get("/guardian/{guardian_id}/subscription")
+def get_subscription(guardian_id: int, db: Session = Depends(get_db)):
+    guardian = db.query(Guardian).filter(Guardian.id == guardian_id).first()
+    if not guardian:
+        raise HTTPException(404, "Guardian not found")
+    
     return {
-        "tier": guardian.subscription_tier,
-        "status": guardian.subscription_status,
-        "trial_ends_at": guardian.trial_ends_at,
-        "renews_at": guardian.subscription_renews_at,
-    }
-
-
-@app.get("/patients/{patient_id}/plan", response_model=dict)
-async def get_patient_plan(patient_id: int, db: Session = Depends(get_db)):
-    """Get patient's subscription plan and trial status."""
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
-    if not patient or not patient.guardian:
-        raise HTTPException(404, "Patient or guardian not found")
-
-    guardian = patient.guardian
-    return {
-        "tier": guardian.subscription_tier,
-        "status": guardian.subscription_status,
-        "trial_ends_at": guardian.trial_ends_at,
-        "health_id": patient.national_health_id,
-        "health_id_type": patient.national_health_id_type,
-        "country": patient.country,
+        "guardian_id": guardian_id,
+        "subscription_tier": guardian.subscription_tier,
+        "subscription_status": guardian.subscription_status,
+        "trial_ends_at": guardian.trial_ends_at.isoformat() if guardian.trial_ends_at else None,
+        "subscription_renews_at": guardian.subscription_renews_at.isoformat() if guardian.subscription_renews_at else None,
     }
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "2.0"}
+    return {"status": "ok", "version": "2.1"}

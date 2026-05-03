@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
 import Link from 'next/link';
 import { getVitals, getFeverHistory, getPatientPlan } from '@/lib/api';
@@ -36,22 +36,26 @@ const BP_COLOR: Record<BpLevel,string> = {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [patient, setPatient] = useState<any>(null);
-  const [plan, setPlan] = useState<any>(null);
-  const [ready,   setReady]   = useState(false);
+  const params = useSearchParams();
+  const [patient,  setPatient]  = useState<any>(null);
+  const [guardian, setGuardian] = useState<any>(null);
+  const [ready,    setReady]    = useState(false);
+  const [successMsg, setSuccessMsg] = useState('');
 
   useEffect(() => {
     const p = localStorage.getItem('medice_patient');
-    if (!p) { router.replace('/'); return; }
+    const g = localStorage.getItem('medice_guardian');
+    if (!p) { router.replace('/login'); return; }
     setPatient(JSON.parse(p));
+    if (g) setGuardian(JSON.parse(g));
     setReady(true);
-  }, [router]);
 
-  useEffect(() => {
-    if (ready && patient?.id) {
-      getPatientPlan(patient.id).then(setPlan).catch(() => {});
+    // Show success message if returning from Stripe
+    if (params.get('success')) {
+      setSuccessMsg('✅ Συνδρομή ενεργοποιήθηκε!');
+      setTimeout(() => setSuccessMsg(''), 5000);
     }
-  }, [ready, patient?.id]);
+  }, [router, params]);
 
   const { data: vitals, error: vErr, isLoading, mutate } = useSWR(
     ready ? ['v', patient?.id] : null,
@@ -63,10 +67,17 @@ export default function DashboardPage() {
     () => getFeverHistory(patient.id),
     { refreshInterval: 60_000 },
   );
+  const { data: plan } = useSWR(
+    ready ? ['plan', patient?.id] : null,
+    () => getPatientPlan(patient.id),
+    { refreshInterval: 0 },
+  );
 
   if (!ready) return null;
 
   const temp  = vitals?.temperature ?? null;
+  const fever_rate = vitals?.fever_rate ?? null;  // °C per minute
+  const rapid_rise = vitals?.rapid_rise ?? false;
   const spo2  = vitals?.spo2        ?? null;
   const bpm   = vitals?.bpm         ?? null;
   const sys   = vitals?.systolic    ?? null;
@@ -81,37 +92,49 @@ export default function DashboardPage() {
   const isHRAbnorm  = bpm  !== null && (bpm < 60 || bpm > 130);
   const bpLevel     = classifyBP(sys, dia, bpOk);
 
+  const subLabel = plan?.in_trial
+    ? `🎁 Trial — ${plan.trial_days_left} μέρες απομένουν`
+    : plan?.subscription === 'bp' ? '💓 Πλήρης (με Πίεση)' : '🌡️ Βασική';
+
   return (
     <div className="min-h-screen bg-slate-50">
       <nav className="bg-slate-800 text-white px-6 py-3 flex items-center justify-between">
         <span className="font-bold text-lg">🏥 ThronomedICE</span>
-        <div className="flex gap-6 text-sm">
+        <div className="flex gap-6 text-sm items-center">
           <span className="text-slate-200 font-medium">Dashboard</span>
           <Link href="/simulate" className="text-slate-400 hover:text-white transition">Προσομοίωση</Link>
+          {guardian && (
+            <span className="text-slate-400 text-xs hidden sm:block">👤 {guardian.name}</span>
+          )}
         </div>
-        <button onClick={() => { localStorage.clear(); router.replace('/'); }}
+        <button onClick={() => { localStorage.clear(); router.replace('/login'); }}
           className="text-slate-400 hover:text-white text-sm transition">Αποσύνδεση</button>
       </nav>
 
       <div className="max-w-5xl mx-auto px-4 py-8">
+        {successMsg && (
+          <div className="bg-green-100 border border-green-300 text-green-800 rounded-xl p-3 mb-6 text-sm">
+            {successMsg}
+          </div>
+        )}
+
         <div className="flex items-center justify-between mb-6">
           <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold text-slate-800">{patient?.name}</h1>
-              {plan?.tier && (
-                <span className={`text-xs font-semibold px-3 py-1 rounded-full ${
-                  plan.tier === 'trial' ? 'bg-blue-100 text-blue-700' :
-                  plan.tier === 'basic' ? 'bg-emerald-100 text-emerald-700' :
-                  plan.tier === 'premium' ? 'bg-purple-100 text-purple-700' :
-                  'bg-amber-100 text-amber-700'
+            <h1 className="text-2xl font-bold text-slate-800">{patient?.name}</h1>
+            <div className="flex items-center gap-3 mt-0.5">
+              {ts && <p className="text-sm text-slate-400">Τελευταία: {ts.toLocaleTimeString('el-GR')}</p>}
+              {plan && (
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                  plan.in_trial
+                    ? 'bg-green-100 text-green-700'
+                    : plan.subscription === 'bp'
+                      ? 'bg-blue-100 text-blue-700'
+                      : 'bg-slate-100 text-slate-600'
                 }`}>
-                  {plan.tier === 'trial' ? '✨ Δοκιμή' :
-                   plan.tier === 'basic' ? '📱 Βασικό' :
-                   plan.tier === 'premium' ? '⭐ Premium' : plan.tier}
+                  {subLabel}
                 </span>
               )}
             </div>
-            {ts && <p className="text-sm text-slate-400 mt-0.5">Τελευταία: {ts.toLocaleTimeString('el-GR')}</p>}
           </div>
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 px-3 py-1 rounded-full">
@@ -124,6 +147,13 @@ export default function DashboardPage() {
             </button>
           </div>
         </div>
+
+        {/* Rapid fever rise alert - HIGHEST PRIORITY */}
+        {rapid_rise && fever_rate && (
+          <div className="bg-red-100 border-2 border-red-400 text-red-800 rounded-xl p-4 mb-6 text-sm font-semibold animate-pulse">
+            🚨 ΤΑΧΕΙΑ ΑΝΟΔΟΣ ΠΥΡΕΤΟΥ! Ανέβηκε {(fever_rate * 30).toFixed(2)}°C σε 30 λεπτά.
+          </div>
+        )}
 
         {vErr && (
           <div className="bg-orange-50 border border-orange-200 text-orange-700 rounded-xl p-4 mb-6 text-sm">
@@ -159,6 +189,14 @@ export default function DashboardPage() {
           </div>
           <div className="text-xs opacity-60 mt-1">mmHg (συστολική / διαστολική)</div>
         </div>
+
+        {plan?.national_health_id && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6 text-sm">
+            <span className="font-semibold text-blue-800">🏥 {plan.health_id_label}:</span>{' '}
+            <span className="text-blue-700 font-mono">{plan.national_health_id}</span>
+            <span className="text-blue-500 ml-2 text-xs">(για σύνδεση με νοσοκομείο)</span>
+          </div>
+        )}
 
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
           <h2 className="text-base font-semibold text-slate-700 mb-4">📋 Ιστορικό Πυρετών</h2>
