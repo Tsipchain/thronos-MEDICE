@@ -118,11 +118,6 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
-class RegisterPayload(BaseModel):
-    guardian: GuardianCreate
-    patient: PatientCreateRegister
-
-
 class PatientCreateRegister(BaseModel):
     name: str
     birth_date: str
@@ -143,6 +138,12 @@ class PatientCreateRegister(BaseModel):
         if v not in {"basic", "bp", "premium"}:
             raise ValueError("subscription must be one of: basic, bp, premium")
         return v
+
+
+class RegisterPayload(BaseModel):
+    guardian: GuardianCreate
+    patient: PatientCreateRegister
+
 
 app.include_router(hospital_router)
 app.include_router(thronos_router)
