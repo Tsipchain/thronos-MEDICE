@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
 import Link from 'next/link';
 import { getVitals, getFeverHistory, getPatientPlan } from '@/lib/api';
@@ -36,9 +36,11 @@ const BP_COLOR: Record<BpLevel,string> = {
 
 export default function DashboardPage() {
   const router = useRouter();
+  const params = useSearchParams();
   const [patient,  setPatient]  = useState<any>(null);
   const [guardian, setGuardian] = useState<any>(null);
   const [ready,    setReady]    = useState(false);
+  const [successMsg, setSuccessMsg] = useState('');
 
   useEffect(() => {
     const p = localStorage.getItem('medice_patient');
@@ -47,7 +49,13 @@ export default function DashboardPage() {
     setPatient(JSON.parse(p));
     if (g) setGuardian(JSON.parse(g));
     setReady(true);
-  }, [router]);
+
+    // Show success message if returning from Stripe
+    if (params.get('success')) {
+      setSuccessMsg('✅ Συνδρομή ενεργοποιήθηκε!');
+      setTimeout(() => setSuccessMsg(''), 5000);
+    }
+  }, [router, params]);
 
   const { data: vitals, error: vErr, isLoading, mutate } = useSWR(
     ready ? ['v', patient?.id] : null,
@@ -68,6 +76,8 @@ export default function DashboardPage() {
   if (!ready) return null;
 
   const temp  = vitals?.temperature ?? null;
+  const fever_rate = vitals?.fever_rate ?? null;  // °C per minute
+  const rapid_rise = vitals?.rapid_rise ?? false;
   const spo2  = vitals?.spo2        ?? null;
   const bpm   = vitals?.bpm         ?? null;
   const sys   = vitals?.systolic    ?? null;
@@ -102,6 +112,12 @@ export default function DashboardPage() {
       </nav>
 
       <div className="max-w-5xl mx-auto px-4 py-8">
+        {successMsg && (
+          <div className="bg-green-100 border border-green-300 text-green-800 rounded-xl p-3 mb-6 text-sm">
+            {successMsg}
+          </div>
+        )}
+
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-slate-800">{patient?.name}</h1>
@@ -131,6 +147,13 @@ export default function DashboardPage() {
             </button>
           </div>
         </div>
+
+        {/* Rapid fever rise alert - HIGHEST PRIORITY */}
+        {rapid_rise && fever_rate && (
+          <div className="bg-red-100 border-2 border-red-400 text-red-800 rounded-xl p-4 mb-6 text-sm font-semibold animate-pulse">
+            🚨 ΤΑΧΕΙΑ ΑΝΟΔΟΣ ΠΥΡΕΤΟΥ! Ανέβηκε {(fever_rate * 30).toFixed(2)}°C σε 30 λεπτά.
+          </div>
+        )}
 
         {vErr && (
           <div className="bg-orange-50 border border-orange-200 text-orange-700 rounded-xl p-4 mb-6 text-sm">
@@ -171,7 +194,7 @@ export default function DashboardPage() {
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6 text-sm">
             <span className="font-semibold text-blue-800">🏥 {plan.health_id_label}:</span>{' '}
             <span className="text-blue-700 font-mono">{plan.national_health_id}</span>
-            <span className="text-blue-500 ml-2 text-xs">(για σύνδεση με νοσοκομεία)</span>
+            <span className="text-blue-500 ml-2 text-xs">(για σύνδεση με νοσοκομείο)</span>
           </div>
         )}
 

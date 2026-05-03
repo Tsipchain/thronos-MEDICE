@@ -28,6 +28,14 @@ class Guardian(Base):
     email         = Column(String, unique=True)
     password_hash = Column(String, nullable=True)
     fcm_token     = Column(String, nullable=True)
+    # Subscription & billing
+    subscription_tier    = Column(String, default="free")  # free | basic | premium | family
+    subscription_status  = Column(String, default="active")  # active | cancelled | past_due | trial
+    stripe_customer_id   = Column(String, nullable=True, unique=True)
+    stripe_subscription_id = Column(String, nullable=True, unique=True)
+    trial_ends_at        = Column(DateTime, nullable=True)
+    subscription_renews_at = Column(DateTime, nullable=True)
+    created_at           = Column(DateTime, default=datetime.utcnow)
     patients      = relationship("Patient", back_populates="guardian")
 
 
@@ -43,6 +51,9 @@ class Patient(Base):
     national_health_id      = Column(String, nullable=True)
     national_health_id_type = Column(String, nullable=True)  # amka | kvnr | svnr | snils | nhs | nir | bsn | phn | ssn
     country                 = Column(String, nullable=True, default="GR")
+    # Fever velocity tracking (for rapid fever detection)
+    last_fever_check_time = Column(DateTime, nullable=True)
+    last_fever_rate       = Column(Float, nullable=True)  # °C per minute
     guardian        = relationship("Guardian", back_populates="patients")
     readings        = relationship("TempReading", back_populates="patient")
     fever_events    = relationship("FeverEvent", back_populates="patient")
@@ -67,6 +78,8 @@ class TempReading(Base):
     spo2_valid  = Column(Boolean, default=False)
     bpm_valid   = Column(Boolean, default=False)
     bp_valid    = Column(Boolean, default=False)
+    # Fever velocity (calculated, not stored during input)
+    fever_rate  = Column(Float, nullable=True)  # °C per minute
     timestamp   = Column(DateTime, default=datetime.utcnow)
     patient     = relationship("Patient", back_populates="readings")
 
@@ -81,6 +94,7 @@ class FeverEvent(Base):
     min_spo2          = Column(Float, nullable=True)
     avg_bpm           = Column(Float, nullable=True)
     antipyretic_given = Column(Boolean, default=False)
+    rapid_rise        = Column(Boolean, default=False)  # Fever rose >0.8°C in 30 min
     blockchain_tx     = Column(String, nullable=True)
     patient           = relationship("Patient", back_populates="fever_events")
 
@@ -98,7 +112,7 @@ class HospitalAccess(Base):
     revoked_at       = Column(DateTime, nullable=True)
 
 
-# ── Pydantic schemas ────────────────────────────────────────────────────────
+# ──── Pydantic schemas ──────────────────────────────────────────────────────
 
 class TempReadingIn(BaseModel):
     patient_id:  str
@@ -124,6 +138,7 @@ class TempReadingOut(BaseModel):
     spo2_valid:  bool
     bpm_valid:   bool
     bp_valid:    bool
+    fever_rate:  Optional[float]  # °C per minute
     timestamp:   datetime
     class Config: orm_mode = True
 
@@ -143,7 +158,7 @@ class PatientCreate(BaseModel):
     subscription:            Optional[str]      = "basic"
     free_until:              Optional[datetime] = None
     national_health_id:      Optional[str]      = None
-    national_health_id_type: Optional[str]      = None  # amka | kvnr | svnr | snils | nhs | nir | bsn | phn | ssn
+    national_health_id_type: Optional[str]      = None
     country:                 Optional[str]      = "GR"
 
 
@@ -166,5 +181,17 @@ class FeverEventOut(BaseModel):
     min_spo2:          Optional[float]
     avg_bpm:           Optional[float]
     antipyretic_given: bool
+    rapid_rise:        bool
     blockchain_tx:     Optional[str]
     class Config: orm_mode = True
+
+
+class StripeCheckoutRequest(BaseModel):
+    tier: str  # basic | premium | family
+    success_url: str
+    cancel_url: str
+
+
+class StripeWebhookRequest(BaseModel):
+    type: str
+    data: dict

@@ -19,6 +19,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export const getVitals       = (id: number) => req<any>(`/patients/${id}/vitals`);
 export const getFeverHistory = (id: number) => req<any[]>(`/patients/${id}/fever-history`);
 export const getPatientPlan  = (id: number) => req<any>(`/patients/${id}/plan`);
+export const getSubscription = (id: number) => req<any>(`/guardian/${id}/subscription`);
 
 export const createGuardian = (name: string, email: string, password: string) =>
   req<{ id: number }>('/guardians', {
@@ -43,6 +44,13 @@ export const createPatient = (data: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
+  });
+
+export const createCheckoutSession = (guardian_id: number, tier: string, success_url: string, cancel_url: string) =>
+  req<{ checkout_url: string }>('/subscribe/checkout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ guardian_id, tier, success_url, cancel_url }),
   });
 
 export const simulate = (data: {

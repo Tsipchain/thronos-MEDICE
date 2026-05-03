@@ -7,3 +7,8 @@ web3
 httpx
 bcrypt
 aiohttp
+stripe
+google-auth
+google-auth-httplib2
+google-auth-oauthlib
+google-cloud-firestore
