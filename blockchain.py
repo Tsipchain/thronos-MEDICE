@@ -4,7 +4,13 @@ import logging
 from datetime import datetime
 from typing import Optional
 from web3 import Web3
-from web3.middleware.geth_poa import geth_poa_middleware
+
+try:
+    # web3.py >= 6.0
+    from web3.middleware import ExtraDataToPOAMiddleware as _poa_middleware
+except ImportError:
+    # web3.py < 6.0 fallback
+    from web3.middleware import geth_poa_middleware as _poa_middleware
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +37,7 @@ class BlockchainService:
     def _connect(self):
         try:
             self.w3 = Web3(Web3.HTTPProvider(THRONOS_RPC_URL))
-            self.w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+            self.w3.middleware_onion.inject(_poa_middleware, layer=0)
             if not self.w3.is_connected():
                 logger.warning("Thronos node unreachable - blockchain features disabled")
                 return
