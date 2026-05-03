@@ -70,16 +70,37 @@
 
 ### 2. ΤΕΧΝΙΚΗ ΠΕΡΙΓΡΑΦΗ
 
-#### Α. Hardware (ESP32-S3 Wristband)
+#### Α. Hardware (ESP32-S3 Wristband) & Target Users
 
 **Αισθητήρες:**
 - MLX90614: IR θερμόμετρο, ±0.5°C ακρίβεια
-- MAX30102: Pulse oximeter (SpO2) + heart rate
-- Sampling: κάθε 5 λεπτά (configurable)
+- MAX30102: Pulse oximeter (SpO2) + heart rate monitor
+- Optional: BP cuff (premium tier)
+- Sampling: κάθε 5 λεπτά (ρυθμιζόμενο)
+
+**Μετρούμενα Σημεία:**
+✅ Θερμοκρασία (Celsius)
+✅ SpO2 — κορεσμός αίματος (%)
+✅ BPM — καρδιακοί παλμοί (beats per minute)
+✅ Αρτηριακή πίεση (systolic/diastolic mmHg) — premium tier
+❌ Αναπνοές ανά λεπτό
+❌ Κίνηση / ανίχνευση πτώσης (μελλοντικό)
+
+**Στόχος χρήσης:**
+👶 **Βρέφη και παιδιά 0–12 ετών** (κύριος στόχος)
+🧑 Τεχνικά ενήλικες ή ηλικιωμένοι (δεν αποκλείεται, αλλά δεν είναι εστίαση)
+📱 Ο κηδεμόνας (γονέας) χρησιμοποιεί την εφαρμογή · το παιδί φοράει τη συσκευή
+
+**Κλινική Σημασία:**
+Η ταχεία ανόδος πυρετού σε παιδιά συσχετίζεται με:
+- Φεβριλές σπασμωδίες (febrile seizures) — κίνδυνος σε ηλικία 6-60 μηνών
+- Σεψη και ταχεία επιδείνωση λοίμωξης
+- Ανάγκη άμεσης ιατρικής παρέμβασης
 
 **Συγχρονισμός με Server:**
-- BLE 5.0 → React Native app → HTTPS → FastAPI server
-- Timestamp καταγράφεται σε κάθε ανάγνωση
+- BLE 5.0 → React Native mobile app → HTTPS → FastAPI backend
+- Timestamp καταγράφεται σε UTC για κάθε ανάγνωση
+- Automatic sync: κάθε 5 λεπτά ή on-demand
 
 #### Β. Fever Velocity Detection Algorithm
 
@@ -95,58 +116,150 @@ Calculation:
   
   fever_rate = (temperature_n - temperature_n-1) / time_diff
   
-Alert Trigger:
+Alert Trigger (FEVER VELOCITY):
   if fever_rate > 0.0267 °C/min AND temperature_n >= 38.0°C:
-    # 0.0267 °C/min = 0.8°C per 30 min
+    # Equivalent: 0.8°C per 30 min at fever threshold
     SEND_RAPID_FEVER_ALERT(fever_rate, temperature_n)
     FeverEvent.rapid_rise = True
+
+Other Temperature Thresholds:
+  if temperature >= 39.0°C:
+    SEND_HIGH_FEVER_ALERT (πιο επείγον)
+  
+  if temperature >= 38.0°C and no rapid_rise:
+    SEND_FEVER_ALERT (κανονικό πυρετό)
+  
+  if 4_hours_since_last_antipyretic:
+    SEND_ANTIPYRETIC_REMINDER
+
+Vital Signs Thresholds:
+  if SpO2 < 90%:
+    SEND_CRITICAL_SPO2_ALERT
+  if SpO2 < 94%:
+    SEND_LOW_SPO2_ALERT
+  if BPM < 60 or BPM > 130:
+    SEND_HR_ABNORMAL_ALERT
+  if Systolic > 180 or Diastolic > 120:
+    SEND_BP_CRISIS_ALERT
 ```
 
-**Πρωτοτυπία:** Η συγκέκριμη φόρμουλα υπολογισμού της ταχύτητας με χρονικό παράθυρο και το συγκεκριμένο κατώφλι (0.8°C/30min) δεν υπάρχει σε άλλα wearables.
+**Πρωτοτυπία:** Η συγκέκριμη φόρμουλα υπολογισμού της ταχύτητας με χρονικό παράθυρο (minimum 1 λεπτό) και το συγκεκριμένο κατώφλι (0.8°C/30min) **συνδυασμένο με απαίτηση T ≥ 38.0°C** δεν υπάρχει σε άλλα wearables. Owlet και άλλες συσκευές μόνο συγκρίνουν απόλυτη θερμοκρασία με κατώφλι, δεν υπολογίζουν rate-of-rise.
 
-#### Γ. Blockchain Recording
+#### Γ. Blockchain Recording (GDPR Compliant)
 
 ```json
-Transaction:
+On-Chain Transaction (encrypted/anonymized):
 {
   "type": "fever_event",
-  "patient_id": "<THR address>",
-  "start_time": "2026-05-03T10:30:00Z",
-  "peak_temp": 39.2,
-  "rapid_rise": true,
-  "fever_rate": 0.0315,  // °C per minute
+  "patient_id": <internal_integer_id>,    // NO ΑΜΚΑ, NO names
+  "start_time": 1714732200,                // unix timestamp
+  "peak_temp": 3920,                       // stored as integer (x100)
+  "rapid_rise": true,                      // boolean flag
+  "fever_rate": 315,                       // stored as integer (x10000)
   "blockchain_tx": "<Thronos TX hash>"
 }
 ```
 
-Η καταγραφή στο blockchain δημιουργεί αμετάβλητο ιστορικό που δεν μπορεί να διαγραφεί ή τροποποιηθεί.
+**Σημαντικό για GDPR / Ιατρικό Απόρρητο:**
+- Προσωπικά δεδομένα (ΑΜΚΑ, όνομα, ονοματεπώνυμο, διεύθυνση): **ΠΟΤΕ on-chain**
+- Πλήρης μέτρηση (°C, SpO2, BPM κ.λπ.): **off-chain, στη PostgreSQL**
+- On-chain πηγαίνει ΜΟΝΟ:
+  - Ανώνυμο patient ID (εσωτερικό)
+  - Ημερομηνία/ώρα έναρξης
+  - Peak temperature (ακέραιος)
+  - Rapid rise flag (ναι/όχι)
 
-#### Δ. Hospital API — Ασφαλής Σύνδεση
+Η καταγραφή στο blockchain δημιουργεί **αμετάβλητο ιστορικό** που δεν μπορεί να διαγραφεί ή τροποποιηθεί από τρίτους. Χρησιμεύει ως **κρυπτογραφική απόδειξη** για νομικές διαφορές ή έρευνα.
 
-**Ταυτοποίηση ασθενή:**
+#### Δ. Hospital API — Ασφαλής Σύνδεση με Εθνικούς Αριθμούς Υγείας
+
+**Ταυτοποίηση ασθενή (Patient Lookup):**
 ```bash
 GET /hospital/patients/lookup
-  ?health_id_type=amka
+  ?health_id_type=amka        # ή kvnr, svnr, nhs, snils, nir, bsn, phn, ssn
   &health_id=12345678901
-  &hospital_id=H001
+  &hospital_id=EKA_ATHENS
+  Header: X-Hospital-Key: <API_KEY>
 ```
 
-**Αποτέλεσμα:**
-- Νοσοκομείο βρίσκει τον ασθενή **ΜΟΝΟ** με ΑΜΚΑ
-- Κηδεμόνας έχει δώσει συγκατάθεση (OAuth-style)
-- Δεν χρειάζεται κεντρικό ιατρικό αρχείο
-
-**EMR Webhook:**
-```bash
-POST https://hospital-emr.com/webhook/fever-update
-Body:
+**Επιστρεφόμενα δεδομένα (με συγκατάθεση):**
+```json
 {
-  "patient_amka": "12345678901",
-  "latest_vitals": {...},
-  "recent_fever_events": [...],
-  "rapid_rise_detected": true
+  "patient_id": 42,
+  "name": "Μαρία Παπαδοπούλου",
+  "birth_date": "2015-06-15",
+  "national_health_id": "12345678901",
+  "health_id_type": "amka",
+  "country": "GR",
+  "latest_vitals": {
+    "temperature": 39.2,
+    "spo2": 98,
+    "bpm": 110,
+    "fever_rate": 0.045,
+    "timestamp": "2026-05-03T14:23:00Z"
+  },
+  "recent_fever_events": [
+    {"start_time": "...", "end_time": "...", "peak_temp": 39.2, "rapid_rise": true}
+  ]
 }
 ```
+
+**Σημαντικά χαρακτηριστικά:**
+- Νοσοκομείο βρίσκει τον ασθενή **ΜΌΝΟ** με εθνικό αριθμό υγείας (ΑΜΚΑ, KVNR κ.λπ.)
+- Κηδεμόνας **πρέπει να έχει δώσει συγκατάθεση** μέσω της mobile app (OAuth-style consent)
+- Δεν υπάρχει κεντρικό ιατρικό αρχείο — decentralized model
+- Κάθε πρόσβαση καταγράφεται στη βάση δεδομένων
+
+**EMR Webhook (Αυτόματη ενημέρωση νοσοκομειακού συστήματος):**
+```bash
+POST https://hospital-emr.com/webhook/fever-update
+Authorization: Bearer <token>
+Body:
+{
+  "source": "thronos-medice",
+  "patient_id": 42,
+  "national_health_id": "12345678901",
+  "health_id_type": "amka",
+  "name": "Μαρία Παπαδοπούλου",
+  "latest_vitals": {
+    "temperature": 39.2,
+    "spo2": 98,
+    "bpm": 110,
+    "fever_rate": 0.045,
+    "timestamp": "2026-05-03T14:23:00Z"
+  },
+  "recent_fever_events": [
+    {"start_time": "...", "peak_temp": 39.2, "rapid_rise": true}
+  ],
+  "pushed_at": "2026-05-03T14:25:00Z"
+}
+```
+
+Το νοσοκομείο διαμορφώνει το webhook endpoint όταν δίνει συγκατάθεση.
+
+#### Ε. Notification System (FCM — Firebase Cloud Messaging)
+
+Οι ειδοποιήσεις στέλνονται **άμεσα** στο κινητό του κηδεμόνα όταν ενεργοποιούνται τα όρια.
+
+**Τύποι Ειδοποιήσεων:**
+
+| Τύπος | Συνθήκη | Μήνυμα | Προτεραιότητα |
+|---|---|---|---|
+| 🚨 Rapid Fever | fever_rate > 0.8°C/30min + T ≥ 38°C | "Ταχεία ανάβαση πυρετού! +X.XX°C/ώρα" | 🔴 ΚΡΙΣΙΜΗ |
+| 🔥 High Fever | T ≥ 39.0°C | "ΥΨΗΛΟΣ ΠΥΡΕΤΟΣ — Επικοινωνήστε με γιατρό" | 🔴 ΚΡΙΣΙΜΗ |
+| 🌡️ Fever | 38.0°C ≤ T < 39.0°C | "Πυρετός: X.X°C" | 🟡 ΠΡΟΣΟΧΗ |
+| 💊 Reminder | 4h after antipyretic | "Ώρα για φάρμακο" | 🟢 ΥΠΕΝΘΥΜΙΣΗ |
+| ✅ Resolved | T < 38°C for 30+ min | "Πυρετός τελείωσε" | 🟢 INFO |
+| 🚨 Critical SpO2 | SpO2 < 90% | "ΚΡΙΣΙΜΟ — ΚΑΛΕΣΤΕ ΑΣΘΕΝΟΦΟΡΟ" | 🔴 ΚΡΙΣΙΜΗ |
+| ⚠️ Low SpO2 | 90% ≤ SpO2 < 94% | "Χαμηλός κορεσμός αίματος" | 🟡 ΠΡΟΣΟΧΗ |
+| ❤️ Abnormal HR | BPM < 60 or > 130 | "Ανώμαλος καρδιακός ρυθμός" | 🟡 ΠΡΟΣΟΧΗ |
+| 💓 BP Crisis | SBP > 180 or DBP > 120 | "ΥΠΕΡΤΑΣΙΚΉ ΚΡΙΣΙΑ — ΚΑΛΕΣΤΕ ΑΣΘΕΝΟΦΟΡΟ" | 🔴 ΚΡΙΣΙΜΗ |
+
+**Μέσα:**
+✅ Push notification (FCM)
+❌ SMS, Email, Κλήσεις έκτακτης ανάγκης (μελλοντικό)
+
+**Σημαντικό:** Κρίσιμα events (rapid fever, high fever, critical SpO2) αποστέλλονται και **αυτόματα** στο νοσοκομείο (αν έχει webhook configured).
 
 ---
 
@@ -322,10 +435,13 @@ Auto-update electronic health record
 - FastAPI (υπάρχον framework)
 
 **Νέα Συνεισφορά (Novelty):**
-- Ο **αλγόριθμος** υπολογισμού fever velocity
+- Ο **ντετερμινιστικός αλγόριθμος** υπολογισμού fever velocity (όχι AI/ML)
+  - Μαθηματική φόρμουλα: dT/dt = (T_now − T_prev) / time_diff_minutes
+  - Συγκεκριμένο κατώφλι: 0.8°C ανά 30 λεπτά, χωρίς machine learning
 - Η **ένωση** blockchain + wearable + hospital API
-- Η **απλή** και decentralized consent model με health IDs
-- Το **πολυγλωσσικό** σχεδιάσμανας εθνικών ID
+- Η **απλή** και decentralized consent model με εθνικούς αριθμούς υγείας (χωρίς κεντρικό αρχείο)
+- Το **πολυγλωσσικό** σχεδιάσμανας εθνικών ID (9 συστήματα σε ενιαίο database)
+- **Pharmacy distribution network** με μοναδικά activation codes (δεν υπάρχει σε κανένα ανταγωνιστικό wearable)
 
 ---
 
