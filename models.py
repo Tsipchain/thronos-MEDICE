@@ -112,6 +112,39 @@ class HospitalAccess(Base):
     revoked_at       = Column(DateTime, nullable=True)
 
 
+class Reseller(Base):
+    """Pharmacy, medical supply store, or any B2B reseller of the device."""
+    __tablename__ = "resellers"
+    id                  = Column(Integer, primary_key=True)
+    name                = Column(String)                    # "Φαρμακείο Παπαδόπουλος"
+    contact_email       = Column(String, unique=True)
+    contact_phone       = Column(String, nullable=True)
+    address             = Column(String, nullable=True)
+    country             = Column(String, default="GR")
+    reseller_type       = Column(String, default="pharmacy") # pharmacy | medical_supply | online | distributor
+    api_key             = Column(String, unique=True)        # secret key for reseller API calls
+    commission_pct      = Column(Float, default=15.0)        # % of subscription revenue credited
+    is_active           = Column(Boolean, default=True)
+    created_at          = Column(DateTime, default=datetime.utcnow)
+    devices             = relationship("DeviceActivationCode", back_populates="reseller")
+
+
+class DeviceActivationCode(Base):
+    """One-time activation code bundled inside each physical device box."""
+    __tablename__ = "device_activation_codes"
+    id              = Column(Integer, primary_key=True)
+    code            = Column(String, unique=True)           # e.g. "THR-XXXX-YYYY-ZZZZ"
+    reseller_id     = Column(Integer, ForeignKey("resellers.id"))
+    guardian_id     = Column(Integer, ForeignKey("guardians.id"), nullable=True)
+    batch_id        = Column(String, nullable=True)         # groups codes from same manufacturing run
+    is_used         = Column(Boolean, default=False)
+    used_at         = Column(DateTime, nullable=True)
+    free_months     = Column(Integer, default=5)            # trial duration granted on activation
+    device_tier     = Column(String, default="basic")       # default subscription tier after trial
+    created_at      = Column(DateTime, default=datetime.utcnow)
+    reseller        = relationship("Reseller", back_populates="devices")
+
+
 # ──── Pydantic schemas ──────────────────────────────────────────────────────
 
 class TempReadingIn(BaseModel):
@@ -195,3 +228,26 @@ class StripeCheckoutRequest(BaseModel):
 class StripeWebhookRequest(BaseModel):
     type: str
     data: dict
+
+
+class ResellerCreate(BaseModel):
+    name:           str
+    contact_email:  str
+    contact_phone:  Optional[str]  = None
+    address:        Optional[str]  = None
+    country:        Optional[str]  = "GR"
+    reseller_type:  Optional[str]  = "pharmacy"  # pharmacy | medical_supply | online | distributor
+    commission_pct: Optional[float] = 15.0
+
+
+class ActivateDeviceRequest(BaseModel):
+    code:        str   # "THR-XXXX-YYYY-ZZZZ"
+    guardian_id: int
+
+
+class GenerateCodesRequest(BaseModel):
+    reseller_id: int
+    quantity:    int
+    free_months: Optional[int] = 5
+    device_tier: Optional[str] = "basic"
+    batch_id:    Optional[str] = None
