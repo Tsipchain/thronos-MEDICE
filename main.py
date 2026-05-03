@@ -87,6 +87,18 @@ def _run_sqlite_startup_migrations() -> None:
             ("rapid_rise", "BOOLEAN DEFAULT 0"),
             ("blockchain_tx", "TEXT"),
         ],
+        "temp_readings": [
+            ("device_id", "TEXT"),
+            ("spo2", "FLOAT"),
+            ("bpm", "INTEGER"),
+            ("systolic", "INTEGER"),
+            ("diastolic", "INTEGER"),
+            ("spo2_valid", "BOOLEAN DEFAULT 0"),
+            ("bpm_valid", "BOOLEAN DEFAULT 0"),
+            ("bp_valid", "BOOLEAN DEFAULT 0"),
+            ("fever_rate", "FLOAT"),
+            ("timestamp", "DATETIME"),
+        ],
     }
 
     with engine.begin() as conn:
