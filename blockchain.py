@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 THRONOS_RPC_URL  = os.getenv("THRONOS_RPC_URL",      "http://localhost:8545")
 PRIVATE_KEY      = os.getenv("MEDICE_PRIVATE_KEY",   "")
 CONTRACT_ADDRESS = os.getenv("FEVER_CONTRACT_ADDRESS", "")
+THRONOS_APP_KEY  = os.getenv("APP_AI_KEY",            "")   # Bearer token for Thronos node
+THRONOS_ADMIN    = os.getenv("ADMIN_SECRET",          "")   # Admin secret (fallback)
 
 FEVER_ABI = json.loads('['
     '{"inputs":[{"internalType":"string","name":"_patientId","type":"string"},{"internalType":"uint256","name":"_temperature","type":"uint256"},{"internalType":"uint256","name":"_timestamp","type":"uint256"},{"internalType":"bool","name":"_antipyreticGiven","type":"bool"}],"name":"recordFeverEvent","outputs":[],"stateMutability":"nonpayable","type":"function"},'
@@ -36,7 +38,19 @@ class BlockchainService:
 
     def _connect(self):
         try:
-            self.w3 = Web3(Web3.HTTPProvider(THRONOS_RPC_URL))
+            # Build auth headers for the Thronos node
+            headers = {}
+            if THRONOS_APP_KEY:
+                headers["Authorization"] = f"Bearer {THRONOS_APP_KEY}"
+                headers["X-API-Key"] = THRONOS_APP_KEY
+            if THRONOS_ADMIN:
+                headers["X-Admin-Secret"] = THRONOS_ADMIN
+
+            provider = Web3.HTTPProvider(
+                THRONOS_RPC_URL,
+                request_kwargs={"headers": headers, "timeout": 10} if headers else {"timeout": 10},
+            )
+            self.w3 = Web3(provider)
             self.w3.middleware_onion.inject(_poa_middleware, layer=0)
             if not self.w3.is_connected():
                 logger.warning("Thronos node unreachable - blockchain features disabled")
