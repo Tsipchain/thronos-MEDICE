@@ -13,7 +13,7 @@ import stripe
 from pydantic import BaseModel, field_validator
 
 from models import (
-    Base, Guardian, Patient, TempReading, FeverEvent,
+    Base, Guardian, Patient, TempReading, FeverEvent, Device,
     TempReadingIn, PatientCreate, GuardianCreate, GuardianLogin,
     FeverEventOut, SimulateIn, HEALTH_ID_TYPES,
     StripeCheckoutRequest,
@@ -102,6 +102,19 @@ def _run_sqlite_startup_migrations() -> None:
     }
 
     with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS devices (
+                id INTEGER PRIMARY KEY,
+                patient_id INTEGER,
+                device_id TEXT UNIQUE,
+                device_type TEXT,
+                firmware_version TEXT,
+                connection_mode TEXT,
+                last_seen_at DATETIME,
+                battery_level INTEGER,
+                created_at DATETIME
+            )
+        """))
         for table_name, columns in required_columns.items():
             existing = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
             existing_names = {row[1] for row in existing}
@@ -377,6 +390,11 @@ async def post_reading(reading: TempReadingIn, db: Session = Depends(get_db)):
 
     ts        = reading.timestamp or datetime.utcnow()
     fcm_token = patient.guardian.fcm_token if patient.guardian else None
+    if reading.device_id:
+        device = db.query(Device).filter(Device.device_id == reading.device_id).first()
+        if device:
+            device.last_seen_at = ts
+            db.commit()
 
     return await _process_vitals(
         str(reading.patient_id), reading, ts, fcm_token, db, patient, save_to_db=True,
@@ -616,6 +634,65 @@ def create_patient(p: PatientCreate, db: Session = Depends(get_db)):
     db.add(patient)
     db.commit()
     return {"id": patient.id}
+
+
+@app.post("/devices/register", response_model=dict)
+def register_device(body: dict, db: Session = Depends(get_db)):
+    patient_id = int(body.get("patient_id"))
+    device_id = str(body.get("device_id", "")).strip()
+    if not device_id:
+        raise HTTPException(422, "device_id is required")
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(404, "Patient not found")
+    existing = db.query(Device).filter(Device.device_id == device_id).first()
+    if existing:
+        existing.patient_id = patient_id
+        existing.device_type = body.get("device_type")
+        existing.firmware_version = body.get("firmware_version")
+        existing.connection_mode = body.get("connection_mode")
+        db.commit()
+        return {"status": "ok", "id": existing.id, "device_id": existing.device_id}
+    d = Device(
+        patient_id=patient_id,
+        device_id=device_id,
+        device_type=body.get("device_type"),
+        firmware_version=body.get("firmware_version"),
+        connection_mode=body.get("connection_mode"),
+        created_at=datetime.utcnow(),
+    )
+    db.add(d)
+    db.commit()
+    return {"status": "ok", "id": d.id, "device_id": d.device_id}
+
+
+@app.get("/patients/{patient_id}/devices", response_model=list[dict])
+def patient_devices(patient_id: int, db: Session = Depends(get_db)):
+    return [
+        {
+            "id": d.id,
+            "device_id": d.device_id,
+            "device_type": d.device_type,
+            "firmware_version": d.firmware_version,
+            "connection_mode": d.connection_mode,
+            "last_seen_at": d.last_seen_at,
+            "battery_level": d.battery_level,
+            "created_at": d.created_at,
+        }
+        for d in db.query(Device).filter(Device.patient_id == patient_id).all()
+    ]
+
+
+@app.post("/devices/{device_id}/heartbeat", response_model=dict)
+def device_heartbeat(device_id: str, body: dict, db: Session = Depends(get_db)):
+    d = db.query(Device).filter(Device.device_id == device_id).first()
+    if not d:
+        raise HTTPException(404, "Device not found")
+    d.last_seen_at = datetime.utcnow()
+    if body.get("battery_level") is not None:
+        d.battery_level = int(body["battery_level"])
+    db.commit()
+    return {"status": "ok", "device_id": d.device_id, "last_seen_at": d.last_seen_at}
 
 
 @app.post("/patients/{patient_id}/fcm-token")

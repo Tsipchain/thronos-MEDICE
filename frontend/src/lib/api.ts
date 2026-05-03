@@ -51,6 +51,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export const getVitals       = (id: number) => req<any>(`/patients/${id}/vitals`);
 export const getFeverHistory = (id: number) => req<any[]>(`/patients/${id}/fever-history`);
 export const getPatientPlan  = (id: number) => req<any>(`/patients/${id}/plan`);
+export const getPatientDevices = (id: number) => req<any[]>(`/patients/${id}/devices`);
 export const getSubscription = (id: number) => req<any>(`/guardian/${id}/subscription`);
 
 export const createGuardian = (name: string, email: string, password: string) =>
@@ -110,3 +111,32 @@ export const simulate = (data: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
+
+export const postReading = (data: {
+  patient_id: string;
+  device_id: string;
+  temperature: number;
+  spo2?: number;
+  bpm?: number;
+  systolic?: number;
+  diastolic?: number;
+  spo2_valid?: boolean;
+  bpm_valid?: boolean;
+  bp_valid?: boolean;
+}) => req<any>('/readings', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(data),
+});
+
+export const registerDevice = (data: {
+  patient_id: number;
+  device_id: string;
+  device_type?: string;
+  firmware_version?: string;
+  connection_mode?: string;
+}) => req<{ status: string; id: number; device_id: string }>('/devices/register', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(data),
+});
