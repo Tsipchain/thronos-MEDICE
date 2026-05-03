@@ -1,16 +1,30 @@
 function base(): string {
   const fallback = 'https://thronos-medice.up.railway.app';
   if (typeof window !== 'undefined') {
-    return localStorage.getItem('medice_api_url') ||
-      process.env.NEXT_PUBLIC_API_URL || fallback;
+    const localUrl = localStorage.getItem('medice_api_url') || '';
+    return normalizeBaseUrl(localUrl) ||
+      normalizeBaseUrl(process.env.NEXT_PUBLIC_API_URL || '') ||
+      normalizeBaseUrl(fallback);
   }
-  return process.env.NEXT_PUBLIC_API_URL || fallback;
+  return normalizeBaseUrl(process.env.NEXT_PUBLIC_API_URL || '') || normalizeBaseUrl(fallback);
+}
+
+function normalizeBaseUrl(url: string): string {
+  return url.trim().replace(/\/+$/, '');
+}
+
+function normalizePath(path: string): string {
+  return '/' + path.replace(/^\/+/, '');
+}
+
+function apiUrl(path: string): string {
+  return normalizeBaseUrl(base()) + normalizePath(path);
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const payload = init?.body ? JSON.parse(String(init.body)) : undefined;
   const safePayload = payload && typeof payload === 'object' ? { ...payload, password: payload.password ? '***' : undefined } : payload;
-  const res = await fetch(base() + path, {
+  const res = await fetch(apiUrl(path), {
     ...init,
     cache: 'no-store',
     headers: {
