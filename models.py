@@ -10,27 +10,36 @@ Base = declarative_base()
 
 class Guardian(Base):
     __tablename__ = "guardians"
-    id            = Column(Integer, primary_key=True)
-    name          = Column(String)
-    email         = Column(String, unique=True)
-    password_hash = Column(String, nullable=True)
-    fcm_token     = Column(String, nullable=True)
-    patients      = relationship("Patient", back_populates="guardian")
+    id                      = Column(Integer, primary_key=True)
+    name                    = Column(String)
+    email                   = Column(String, unique=True)
+    password_hash           = Column(String, nullable=True)
+    fcm_token               = Column(String, nullable=True)
+    subscription_tier       = Column(String, default="trial")  # trial, basic, premium, family
+    subscription_status     = Column(String, default="active")  # active, cancelled, past_due
+    stripe_customer_id      = Column(String, nullable=True)
+    stripe_subscription_id  = Column(String, nullable=True)
+    trial_ends_at           = Column(DateTime, nullable=True)
+    subscription_renews_at  = Column(DateTime, nullable=True)
+    patients                = relationship("Patient", back_populates="guardian")
 
 
 class Patient(Base):
     __tablename__ = "patients"
-    id              = Column(Integer, primary_key=True)
-    name            = Column(String)
-    birth_date      = Column(DateTime, nullable=True)
-    guardian_id     = Column(Integer, ForeignKey("guardians.id"))
-    # Subscription tier: "basic" (temp+SpO2+HR) or "bp" (+ blood pressure)
-    subscription    = Column(String, default="basic")
-    # Free trial: date until which full service is free (5 months post-device-purchase)
-    free_until      = Column(DateTime, nullable=True)
-    guardian        = relationship("Guardian", back_populates="patients")
-    readings        = relationship("TempReading", back_populates="patient")
-    fever_events    = relationship("FeverEvent", back_populates="patient")
+    id                         = Column(Integer, primary_key=True)
+    name                       = Column(String)
+    birth_date                 = Column(DateTime, nullable=True)
+    guardian_id                = Column(Integer, ForeignKey("guardians.id"))
+    subscription               = Column(String, default="basic")
+    free_until                 = Column(DateTime, nullable=True)
+    national_health_id         = Column(String, nullable=True)
+    national_health_id_type    = Column(String, nullable=True)  # amka, kvnr, svnr, snils, nhs, etc
+    country                    = Column(String, nullable=True)
+    last_fever_check_time      = Column(DateTime, nullable=True)
+    last_fever_rate            = Column(Float, nullable=True)
+    guardian                   = relationship("Guardian", back_populates="patients")
+    readings                   = relationship("TempReading", back_populates="patient")
+    fever_events               = relationship("FeverEvent", back_populates="patient")
 
     @property
     def bp_subscription(self) -> bool:
@@ -53,6 +62,7 @@ class TempReading(Base):
     spo2_valid  = Column(Boolean, default=False)
     bpm_valid   = Column(Boolean, default=False)
     bp_valid    = Column(Boolean, default=False)
+    fever_rate  = Column(Float, nullable=True)  # °C per minute
     timestamp   = Column(DateTime, default=datetime.utcnow)
     patient     = relationship("Patient", back_populates="readings")
 
@@ -68,6 +78,7 @@ class FeverEvent(Base):
     avg_bpm           = Column(Float, nullable=True)
     antipyretic_given = Column(Boolean, default=False)
     blockchain_tx     = Column(String, nullable=True)
+    rapid_rise        = Column(Boolean, default=False)
     patient           = relationship("Patient", back_populates="fever_events")
 
 
@@ -80,6 +91,7 @@ class HospitalAccess(Base):
     hospital_address = Column(String, nullable=True)
     is_active        = Column(Boolean, default=True)
     revoked_at       = Column(DateTime, nullable=True)
+    emr_push_url     = Column(String, nullable=True)
 
 
 # ── Pydantic schemas ────────────────────────────────────────────────────────
@@ -150,3 +162,14 @@ class FeverEventOut(BaseModel):
     antipyretic_given: bool
     blockchain_tx:     Optional[str]
     class Config: orm_mode = True
+
+
+class StripeCheckoutRequest(BaseModel):
+    tier:           str  # basic, premium, family
+    success_url:    str
+    cancel_url:     str
+
+
+class StripeWebhookRequest(BaseModel):
+    type:  str
+    data:  dict

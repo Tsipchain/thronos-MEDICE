@@ -9,9 +9,14 @@ export default function Home() {
   const [apiUrl,  setApiUrl]  = useState('');
   const [gName,   setGName]   = useState('');
   const [gEmail,  setGEmail]  = useState('');
+  const [gPass,   setGPass]   = useState('');
+  const [gPass2,  setGPass2]  = useState('');
   const [pName,   setPName]   = useState('');
   const [pDob,    setPDob]    = useState('');
   const [sub,     setSub]     = useState<'basic'|'bp'>('basic');
+  const [healthIdType, setHealthIdType] = useState('amka');
+  const [healthId, setHealthId] = useState('');
+  const [country, setCountry] = useState('GR');
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
 
@@ -22,19 +27,28 @@ export default function Home() {
   }, []);
 
   const register = async () => {
-    if (!apiUrl || !gName || !gEmail || !pName) {
+    if (!apiUrl || !gName || !gEmail || !gPass || !pName) {
       setError('Συμπληρώστε όλα τα υποχρεωτικά πεδία.'); return;
+    }
+    if (gPass.length < 8) {
+      setError('Ο κωδικός πρέπει να έχει τουλάχιστον 8 χαρακτήρες.'); return;
+    }
+    if (gPass !== gPass2) {
+      setError('Οι κωδικοί δεν ταιριάζουν.'); return;
     }
     localStorage.setItem('medice_api_url', apiUrl.trim());
     setLoading(true); setError('');
     try {
-      const { id: gId } = await createGuardian(gName, gEmail);
+      const { id: gId } = await createGuardian(gName, gEmail, gPass);
       const freeUntil = new Date();
       freeUntil.setMonth(freeUntil.getMonth() + 5);
       const { id: pId } = await createPatient({
         name: pName, birth_date: pDob || undefined,
         guardian_id: gId, subscription: sub,
         free_until: freeUntil.toISOString(),
+        national_health_id: healthId || undefined,
+        national_health_id_type: healthId ? healthIdType : undefined,
+        country: country || 'GR',
       });
       localStorage.setItem('medice_guardian', JSON.stringify({ id: gId, name: gName, email: gEmail }));
       localStorage.setItem('medice_patient',  JSON.stringify({ id: pId, name: pName, subscription: sub }));
@@ -78,10 +92,23 @@ export default function Home() {
           <Sec title="👤 Κηδεμόνας">
             <Inp label="Όνομα" value={gName} set={setGName} placeholder="Γιώργος Παπαδόπουλος" />
             <Inp label="Email" value={gEmail} set={setGEmail} placeholder="email@example.com" type="email" />
+            <Inp label="Κωδικός (≥8 χαρακτήρες)" value={gPass} set={setGPass} placeholder="••••••••" type="password" />
+            <Inp label="Επιβεβαίωση Κωδικού" value={gPass2} set={setGPass2} placeholder="••••••••" type="password" />
           </Sec>
           <Sec title="🧒 Ασθενής">
             <Inp label="Όνομα" value={pName} set={setPName} placeholder="Μαρία Παπαδοπούλου" />
-            <Inp label="Ημ. Γέννησης (YYYY-MM-DD)" value={pDob} set={setPDob} placeholder="1990-06-15" />
+            <Inp label="Ημ. Γέννησης (YYYY-MM-DD)" value={pDob} set={setPDob} placeholder="2015-06-15" />
+            <Sel label="Χώρα" value={country} set={setCountry} options={{
+              GR: '🇬🇷 Ελλάδα', DE: '🇩🇪 Γερμανία', AT: '🇦🇹 Αυστρία',
+              RU: '🇷🇺 Ρωσία', GB: '🇬🇧 Ηνωμένο Βασίλειο', FR: '🇫🇷 Γαλλία',
+              NL: '🇳🇱 Κάτω Χώρες', CH: '🇨🇭 Ελβετία', SE: '🇸🇪 Σουηδία',
+            }} />
+            <Sel label="Τύπος Αριθμού Υγείας" value={healthIdType} set={setHealthIdType} options={{
+              amka: 'ΑΜΚΑ (Ελλάδα)', kvnr: 'KVNR (Γερμανία)', svnr: 'SVNR (Αυστρία)',
+              snils: 'SNILS (Ρωσία)', nhs: 'NHS (UK)', nir: 'NIR (Γαλλία)',
+              bsn: 'BSN (Κάτω Χώρες)', phn: 'PHN (Ελβετία)', ssn: 'Personnummer (Σουηδία)',
+            }} />
+            <Inp label="Αριθμός Υγείας (προαιρετικό)" value={healthId} set={setHealthId} placeholder="Π.χ. 12345678901 για ΑΜΚΑ" />
             <div>
               <label className="block text-xs text-slate-500 mb-2">Συνδρομή</label>
               <div className="grid grid-cols-2 gap-2">
@@ -126,6 +153,20 @@ function Inp({ label, value, set, placeholder, type = 'text' }: {
       <input type={type} value={value} onChange={e => set(e.target.value)}
         placeholder={placeholder}
         className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300" />
+    </div>
+  );
+}
+function Sel({ label, value, set, options }: {
+  label: string; value: string; set: (v: string) => void;
+  options: Record<string, string>;
+}) {
+  return (
+    <div>
+      <label className="block text-xs text-slate-500 mb-1">{label}</label>
+      <select value={value} onChange={e => set(e.target.value)}
+        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300">
+        {Object.entries(options).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+      </select>
     </div>
   );
 }

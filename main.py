@@ -6,17 +6,19 @@ from datetime import datetime
 import hashlib
 import secrets
 import os
+import stripe
 
 from models import (
     Base, Guardian, Patient, TempReading, FeverEvent,
     TempReadingIn, PatientCreate, GuardianCreate, GuardianLogin,
-    FeverEventOut, SimulateIn,
+    FeverEventOut, SimulateIn, StripeCheckoutRequest, StripeWebhookRequest,
 )
 from local_analyzer import LocalAnalyzer
 from notifications import (
     send_fever_alert, send_high_fever_alert,
     send_antipyretic_reminder, send_fever_ended,
     send_spo2_alert, send_hr_alert, send_bp_alert,
+    send_rapid_fever_alert,
 )
 from blockchain import record_fever_start, record_fever_end
 from hospital_api import router as hospital_router
@@ -32,6 +34,32 @@ engine       = create_engine(DB_URL, connect_args=_connect_args)
 SessionLocal = sessionmaker(bind=engine)
 
 analyzer = LocalAnalyzer()
+
+stripe.api_key = os.getenv("STRIPE_API_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_PRODUCT_BASIC = os.getenv("STRIPE_PRODUCT_BASIC", "")
+STRIPE_PRODUCT_PREMIUM = os.getenv("STRIPE_PRODUCT_PREMIUM", "")
+STRIPE_PRODUCT_FAMILY = os.getenv("STRIPE_PRODUCT_FAMILY", "")
+
+
+def _calculate_fever_rate(patient_id: str, current_temp: float, ts: datetime, db: Session) -> float | None:
+    """Calculate fever rate (°C per minute) from last reading."""
+    prev_reading = (
+        db.query(TempReading)
+        .filter(TempReading.patient_id == int(patient_id), TempReading.timestamp < ts)
+        .order_by(TempReading.timestamp.desc())
+        .first()
+    )
+    if not prev_reading:
+        return None
+
+    time_diff = (ts - prev_reading.timestamp).total_seconds() / 60  # minutes
+    if time_diff <= 0:
+        return None
+
+    temp_diff = current_temp - prev_reading.temperature
+    fever_rate = temp_diff / time_diff
+    return fever_rate
 
 
 def _hash_password(password: str) -> str:
@@ -98,8 +126,13 @@ async def _process_vitals(
 ) -> dict:
     """Shared logic for /readings and /simulate."""
 
+    fever_rate = None
+    rapid_rise = False
     if save_to_db and patient:
-        db.add(TempReading(
+        fever_rate = _calculate_fever_rate(patient_id, reading.temperature, ts, db)
+        rapid_rise = fever_rate is not None and fever_rate > 0.0267 and reading.temperature >= 38.0
+
+        temp_reading = TempReading(
             patient_id  = patient.id,
             device_id   = reading.device_id,
             temperature = reading.temperature,
@@ -110,8 +143,14 @@ async def _process_vitals(
             spo2_valid  = reading.spo2_valid  or False,
             bpm_valid   = reading.bpm_valid   or False,
             bp_valid    = reading.bp_valid    or False,
+            fever_rate  = fever_rate,
             timestamp   = ts,
-        ))
+        )
+        db.add(temp_reading)
+        db.commit()
+
+        patient.last_fever_check_time = ts
+        patient.last_fever_rate = fever_rate
         db.commit()
 
     t_result = await analyzer.analyze_temp(patient_id, reading.temperature, ts)
@@ -124,6 +163,9 @@ async def _process_vitals(
     )
 
     if fcm_token:
+        if rapid_rise and fever_rate:
+            await send_rapid_fever_alert(fcm_token, reading.temperature, fever_rate)
+
         if t_result["send_fever_alert"]:
             if t_result["fever_level"] == "high_fever":
                 await send_high_fever_alert(fcm_token, reading.temperature)
@@ -145,7 +187,12 @@ async def _process_vitals(
 
     if save_to_db and patient:
         if t_result["is_new_fever"]:
-            event = FeverEvent(patient_id=patient.id, start_time=ts, peak_temp=reading.temperature)
+            event = FeverEvent(
+                patient_id=patient.id,
+                start_time=ts,
+                peak_temp=reading.temperature,
+                rapid_rise=rapid_rise
+            )
             db.add(event)
             db.commit()
             tx = await record_fever_start(str(patient.id), int(reading.temperature * 100), int(ts.timestamp()))
@@ -310,6 +357,95 @@ def register_fcm(patient_id: int, body: dict, db: Session = Depends(get_db)):
     patient.guardian.fcm_token = body.get("token")
     db.commit()
     return {"status": "ok"}
+
+
+@app.post("/subscribe/checkout", response_model=dict)
+async def create_checkout(req: StripeCheckoutRequest, db: Session = Depends(get_db)):
+    """Create Stripe Checkout session for subscription."""
+    if not stripe.api_key:
+        raise HTTPException(500, "Stripe not configured")
+
+    tier_to_product = {
+        "basic":   STRIPE_PRODUCT_BASIC,
+        "premium": STRIPE_PRODUCT_PREMIUM,
+        "family":  STRIPE_PRODUCT_FAMILY,
+    }
+    product_id = tier_to_product.get(req.tier)
+    if not product_id:
+        raise HTTPException(400, "Invalid tier")
+
+    session = stripe.checkout.Session.create(
+        payment_method_types=["card"],
+        line_items=[{"price": product_id, "quantity": 1}],
+        mode="subscription",
+        success_url=req.success_url,
+        cancel_url=req.cancel_url,
+    )
+    return {"url": session.url, "session_id": session.id}
+
+
+@app.post("/subscribe/webhook", response_model=dict)
+async def stripe_webhook(req: StripeWebhookRequest, db: Session = Depends(get_db)):
+    """Handle Stripe webhook events."""
+    if not STRIPE_WEBHOOK_SECRET:
+        return {"status": "ok"}
+
+    event_type = req.type
+    if event_type == "customer.subscription.updated":
+        subscription_id = req.data.get("id")
+        status = req.data.get("status")
+        customer_id = req.data.get("customer")
+
+        guardian = db.query(Guardian).filter(
+            Guardian.stripe_subscription_id == subscription_id
+        ).first()
+        if guardian:
+            guardian.subscription_status = "active" if status == "active" else "inactive"
+            db.commit()
+
+    elif event_type == "customer.subscription.deleted":
+        subscription_id = req.data.get("id")
+        guardian = db.query(Guardian).filter(
+            Guardian.stripe_subscription_id == subscription_id
+        ).first()
+        if guardian:
+            guardian.subscription_status = "cancelled"
+            db.commit()
+
+    return {"status": "ok"}
+
+
+@app.get("/guardian/{guardian_id}/subscription", response_model=dict)
+async def get_subscription(guardian_id: int, db: Session = Depends(get_db)):
+    """Get guardian's subscription status."""
+    guardian = db.query(Guardian).filter(Guardian.id == guardian_id).first()
+    if not guardian:
+        raise HTTPException(404, "Guardian not found")
+
+    return {
+        "tier": guardian.subscription_tier,
+        "status": guardian.subscription_status,
+        "trial_ends_at": guardian.trial_ends_at,
+        "renews_at": guardian.subscription_renews_at,
+    }
+
+
+@app.get("/patients/{patient_id}/plan", response_model=dict)
+async def get_patient_plan(patient_id: int, db: Session = Depends(get_db)):
+    """Get patient's subscription plan and trial status."""
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not patient or not patient.guardian:
+        raise HTTPException(404, "Patient or guardian not found")
+
+    guardian = patient.guardian
+    return {
+        "tier": guardian.subscription_tier,
+        "status": guardian.subscription_status,
+        "trial_ends_at": guardian.trial_ends_at,
+        "health_id": patient.national_health_id,
+        "health_id_type": patient.national_health_id_type,
+        "country": patient.country,
+    }
 
 
 @app.get("/health")

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import useSWR from 'swr';
 import Link from 'next/link';
-import { getVitals, getFeverHistory } from '@/lib/api';
+import { getVitals, getFeverHistory, getPatientPlan } from '@/lib/api';
 import VitalCard from '@/components/VitalCard';
 import FeverHistoryTable from '@/components/FeverHistoryTable';
 
@@ -37,6 +37,7 @@ const BP_COLOR: Record<BpLevel,string> = {
 export default function DashboardPage() {
   const router = useRouter();
   const [patient, setPatient] = useState<any>(null);
+  const [plan, setPlan] = useState<any>(null);
   const [ready,   setReady]   = useState(false);
 
   useEffect(() => {
@@ -45,6 +46,12 @@ export default function DashboardPage() {
     setPatient(JSON.parse(p));
     setReady(true);
   }, [router]);
+
+  useEffect(() => {
+    if (ready && patient?.id) {
+      getPatientPlan(patient.id).then(setPlan).catch(() => {});
+    }
+  }, [ready, patient?.id]);
 
   const { data: vitals, error: vErr, isLoading, mutate } = useSWR(
     ready ? ['v', patient?.id] : null,
@@ -89,7 +96,21 @@ export default function DashboardPage() {
       <div className="max-w-5xl mx-auto px-4 py-8">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-slate-800">{patient?.name}</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold text-slate-800">{patient?.name}</h1>
+              {plan?.tier && (
+                <span className={`text-xs font-semibold px-3 py-1 rounded-full ${
+                  plan.tier === 'trial' ? 'bg-blue-100 text-blue-700' :
+                  plan.tier === 'basic' ? 'bg-emerald-100 text-emerald-700' :
+                  plan.tier === 'premium' ? 'bg-purple-100 text-purple-700' :
+                  'bg-amber-100 text-amber-700'
+                }`}>
+                  {plan.tier === 'trial' ? '✨ Δοκιμή' :
+                   plan.tier === 'basic' ? '📱 Βασικό' :
+                   plan.tier === 'premium' ? '⭐ Premium' : plan.tier}
+                </span>
+              )}
+            </div>
             {ts && <p className="text-sm text-slate-400 mt-0.5">Τελευταία: {ts.toLocaleTimeString('el-GR')}</p>}
           </div>
           <div className="flex items-center gap-3">

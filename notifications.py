@@ -57,3 +57,8 @@ async def send_bp_alert(token: str, systolic: int, diastolic: int, level: str):
                 f"Πίεση: {systolic}/{diastolic} mmHg — {msg}",
                 {"type": "bp_alert", "systolic": str(systolic),
                  "diastolic": str(diastolic), "level": level})
+
+async def send_rapid_fever_alert(token: str, temp: float, fever_rate: float):
+    await _send(token, "🚨 Ταχεία Ανάβαση Πυρετού!",
+                f"Θερμοκρασία: {temp:.1f}°C — +{fever_rate * 60:.2f}°C/ώρα",
+                {"type": "rapid_fever", "temp": str(temp), "fever_rate": str(fever_rate)})
