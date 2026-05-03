@@ -1,4 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
@@ -6,7 +8,9 @@ from datetime import datetime, timedelta
 import hashlib
 import secrets
 import os
+import logging
 import stripe
+from pydantic import BaseModel, field_validator
 
 from models import (
     Base, Guardian, Patient, TempReading, FeverEvent,
@@ -47,6 +51,7 @@ engine       = create_engine(DB_URL, connect_args=_connect_args)
 SessionLocal = sessionmaker(bind=engine)
 
 analyzer = LocalAnalyzer()
+logger = logging.getLogger(__name__)
 
 
 def _hash_password(password: str) -> str:
@@ -72,23 +77,73 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="ThronomedICE Vital Signs API", version="2.1", lifespan=lifespan)
 
-_CORS_ORIGINS = [
-    o.strip()
-    for o in os.getenv(
-        "CORS_ORIGINS",
-        "https://medice.thronoschain.org,https://thronoschain.org,http://localhost:3000"
-    ).split(",")
-    if o.strip()
-]
+def _parse_cors_origins() -> list[str]:
+    defaults = [
+        "https://medice.thronoschain.org",
+        "https://www.medice.thronoschain.org",
+        "https://thronoschain.org",
+        "https://www.thronoschain.org",
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8080",
+    ]
+    raw = os.getenv("CORS_ORIGINS", "")
+    if not raw.strip():
+        return defaults
+    parsed = [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
+    # Keep configured values first, then append missing defaults
+    return list(dict.fromkeys(parsed + defaults))
+
+
+_CORS_ORIGINS = _parse_cors_origins()
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
-    allow_origin_regex=r"https://(.*\.up\.railway\.app|.*\.thronoschain\.org|thronoschain\.org)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+logger.info("CORS configured with %d origins: %s", len(_CORS_ORIGINS), _CORS_ORIGINS)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": exc.errors(),
+            "message": "Validation failed",
+        },
+    )
+
+
+class PatientCreateRegister(BaseModel):
+    name: str
+    birth_date: str
+    subscription: str = "basic"
+    national_health_id: str | None = None
+    national_health_id_type: str | None = None
+    country: str | None = "GR"
+
+    @field_validator("birth_date")
+    @classmethod
+    def birth_date_must_be_date(cls, v: str) -> str:
+        datetime.strptime(v, "%Y-%m-%d")
+        return v
+
+    @field_validator("subscription")
+    @classmethod
+    def subscription_must_be_supported(cls, v: str) -> str:
+        if v not in {"basic", "bp", "premium"}:
+            raise ValueError("subscription must be one of: basic, bp, premium")
+        return v
+
+
+class RegisterPayload(BaseModel):
+    guardian: GuardianCreate
+    patient: PatientCreateRegister
+
 
 app.include_router(hospital_router)
 app.include_router(thronos_router)
@@ -351,12 +406,20 @@ async def mark_antipyretic(event_id: int, db: Session = Depends(get_db)):
 
 @app.post("/guardians", response_model=dict)
 def create_guardian(g: GuardianCreate, db: Session = Depends(get_db)):
-    existing = db.query(Guardian).filter(Guardian.email == g.email).first()
+    logger.info("POST /guardians payload keys: %s", ["name", "email", "password"])
+    email = g.email.strip().lower()
+    name = g.name.strip()
+    if not name:
+        raise HTTPException(422, "Guardian name is required")
+    if len(g.password) < 8:
+        raise HTTPException(422, "Password must be at least 8 characters")
+
+    existing = db.query(Guardian).filter(Guardian.email == email).first()
     if existing:
         raise HTTPException(409, "Email already registered")
     guardian = Guardian(
-        name          = g.name,
-        email         = g.email,
+        name          = name,
+        email         = email,
         password_hash = _hash_password(g.password),
         subscription_tier = "free",
         subscription_status = "active",
@@ -364,6 +427,74 @@ def create_guardian(g: GuardianCreate, db: Session = Depends(get_db)):
     db.add(guardian)
     db.commit()
     return {"id": guardian.id}
+
+
+@app.post("/register", response_model=dict)
+def register(payload: RegisterPayload, db: Session = Depends(get_db)):
+    logger.info("POST /register payload keys: %s", ["guardian", "patient"])
+    g = payload.guardian
+    p = payload.patient
+
+    email = g.email.strip().lower()
+    g_name = g.name.strip()
+    p_name = p.name.strip()
+
+    if not g_name:
+        raise HTTPException(422, "Guardian name is required")
+    if not p_name:
+        raise HTTPException(422, "Patient name is required")
+    if len(g.password) < 8:
+        raise HTTPException(422, "Password must be at least 8 characters")
+
+    existing = db.query(Guardian).filter(Guardian.email == email).first()
+    if existing:
+        raise HTTPException(409, "Email already registered")
+
+    birth_date = datetime.strptime(p.birth_date, "%Y-%m-%d")
+    try:
+        guardian = Guardian(
+            name=g_name,
+            email=email,
+            password_hash=_hash_password(g.password),
+            subscription_tier="free",
+            subscription_status="active",
+        )
+        db.add(guardian)
+        db.flush()
+
+        patient = Patient(
+            name=p_name,
+            birth_date=birth_date,
+            guardian_id=guardian.id,
+            subscription=p.subscription,
+            national_health_id=p.national_health_id,
+            national_health_id_type=p.national_health_id_type,
+            country=p.country or "GR",
+        )
+        db.add(patient)
+        db.flush()
+        db.commit()
+        return {"guardian_id": guardian.id, "patient_id": patient.id, "status": "ok"}
+    except Exception:
+        db.rollback()
+        raise
+
+
+@app.get("/blockchain/status", response_model=dict)
+def blockchain_status():
+    from blockchain import get_status
+    return get_status()
+
+
+@app.get("/config/public", response_model=dict)
+def public_config():
+    from blockchain import get_status
+    return {
+        "app_version": app.version,
+        "cors_origins": _CORS_ORIGINS,
+        "cors_origins_count": len(_CORS_ORIGINS),
+        "blockchain_connected": get_status().get("connected", False),
+    }
 
 
 @app.post("/login", response_model=dict)

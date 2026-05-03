@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { createGuardian, createPatient } from '@/lib/api';
+import { registerGuardianAndPatient } from '@/lib/api';
 
 const HEALTH_ID_TYPES = [
   { value: '',      label: 'Χωρίς αριθμό υγείας' },
@@ -53,16 +53,16 @@ export default function Home() {
     localStorage.setItem('medice_api_url', apiUrl.trim());
     setLoading(true); setError('');
     try {
-      const { id: gId } = await createGuardian(gName, gEmail, gPass);
-      const freeUntil = new Date();
-      freeUntil.setMonth(freeUntil.getMonth() + 5);
-      const { id: pId } = await createPatient({
-        name: pName, birth_date: pDob || undefined,
-        guardian_id: gId, subscription: sub,
-        free_until: freeUntil.toISOString(),
-        national_health_id:      healthId      || undefined,
-        national_health_id_type: healthIdType  || undefined,
-        country:                 country       || 'GR',
+      const { guardian_id: gId, patient_id: pId } = await registerGuardianAndPatient({
+        guardian: { name: gName, email: gEmail, password: gPass },
+        patient: {
+          name: pName,
+          birth_date: pDob || '1991-04-15',
+          subscription: sub,
+          national_health_id: healthId || undefined,
+          national_health_id_type: healthIdType || undefined,
+          country: country || 'GR',
+        },
       });
       localStorage.setItem('medice_guardian', JSON.stringify({ id: gId, name: gName, email: gEmail }));
       localStorage.setItem('medice_patient',  JSON.stringify({ id: pId, name: pName, subscription: sub }));
