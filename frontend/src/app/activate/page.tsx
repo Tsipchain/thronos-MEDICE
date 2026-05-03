@@ -1,8 +1,8 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
-export default function ActivatePage() {
+function ActivateContent() {
   const router = useRouter();
   const params = useSearchParams();
   const [code,      setCode]      = useState(params?.get('code') ?? '');
@@ -142,5 +142,13 @@ export default function ActivatePage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function ActivatePage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading...</div>}>
+      <ActivateContent />
+    </Suspense>
   );
 }

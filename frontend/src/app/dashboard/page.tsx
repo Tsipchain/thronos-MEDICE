@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
 import Link from 'next/link';
@@ -34,7 +34,7 @@ const BP_COLOR: Record<BpLevel,string> = {
   unknown:'bg-slate-50 border-slate-200 text-slate-400',
 };
 
-export default function DashboardPage() {
+function DashboardContent() {
   const router = useRouter();
   const params = useSearchParams();
   const [patient,  setPatient]  = useState<any>(null);
@@ -204,5 +204,13 @@ export default function DashboardPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading...</div>}>
+      <DashboardContent />
+    </Suspense>
   );
 }
