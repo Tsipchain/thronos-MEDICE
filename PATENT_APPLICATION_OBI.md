@@ -193,6 +193,15 @@ Body:
 > - Κλπ. (9 λοιποί τύποι)
 > - Ενιαίο database schema που υποστηρίζει όλους τους τύπους
 
+**Αξίωση 6 (Reseller / Pharmacy Distribution Network):**
+> Σύστημα διανομής wearable IoT ιατρικής συσκευής μέσω δικτύου φαρμακείων και B2B διανομέων, περιλαμβάνον:
+> - **Μοναδικοί κωδικοί ενεργοποίησης** (μορφή `THR-XXXX-YYYY-ZZZZ`) παράγονται ανά batch και τοποθετούνται εντός κάθε κουτιού συσκευής
+> - **Reseller portal** με στατιστικά ενεργοποιήσεων και εκτίμηση προμηθειών
+> - **Αυτόματη εκκίνηση δοκιμαστικής περιόδου** (default: 5 μήνες) κατά την ενεργοποίηση από τον πελάτη
+> - **Attribution κανάλι πωλήσεων** — κάθε ενεργοποίηση συνδέεται με τον reseller που πούλησε τη συσκευή
+> - **Commission tracking** — ποσοστό επαναλαμβανόμενων εσόδων συνδρομής αποδίδεται στον reseller
+> - Υποστήριξη τύπων: φαρμακεία, ιατρικά καταστήματα, online resellers, distributors
+
 ---
 
 ## Ε. ΣΧΕΔΙΑ
@@ -285,19 +294,21 @@ Auto-update electronic health record
 | Blockchain history | ✅ **ΝΕΟ** | ❌ | ❌ | ❌ |
 | Hospital API integration | ✅ **ΝΕΟ** | ❌ | ❌ | ❌ |
 | ΑΜΚΑ/intl health ID support | ✅ **ΝΕΟ** | ❌ | ❌ | ❌ |
+| Pharmacy reseller network | ✅ **ΝΕΟ** | ❌ | ❌ | ❌ |
 | Child-specific (age 0-5) | ✅ | ✅ | ❌ | ❌ |
 | IR thermometer | ✅ | ✅ | ❌ | ❌ |
 | SpO2 + HR | ✅ | ✅ | ✅ | ✅ |
 | Mobile app | ✅ | ✅ | ✅ | ✅ |
 | Subscription model | €10-25/mo | $0 (hardware) | $400 | $0 (hardware) |
+| Pharmacy distribution | ✅ (5+ μήνες trial) | ❌ | ❌ | ❌ |
 
 **Κύρια Διαφορά:** Κανένα υπάρχον wearable δεν έχει:
-- Fever velocity detection
+- Fever velocity detection (rate-of-rise algorithm)
 - Blockchain integration
-- Hospital API
-- National health ID integration
+- Hospital API with national health IDs
+- Pharmacy/reseller distribution with activation codes
 
-Ο συνδυασμός αυτών των τριών είναι **μοναδικός**.
+Ο συνδυασμός αυτών είναι **μοναδικός παγκοσμίως**.
 
 ---
 
@@ -324,9 +335,25 @@ Auto-update electronic health record
 
 **Έσοδα:**
 - Subscription: €1M users × €12/μήνα avg = **€144M ARR**
-- Hardware: €1M users × €80 (one-time) = **€80M** (διεσπαρμένο)
+- Hardware (direct): €1M users × €80 = **€80M** (εφάπαξ)
 - B2B Hospital: 500 νοσοκομεία × €500/μήνα = **€3M ARR**
 - Ασφαλιστικές: 10 εταιρείες × €5M/year = **€50M ARR**
+
+**Δίκτυο Φαρμακείων & Resellers (Νέο Κανάλι):**
+- 5.000 φαρμακεία σε GR/DE/AT/GB × 5 συσκευές/μήνα = 25.000 πωλήσεις/μήνα
+- Gross margin hardware (μέσω reseller): €30/συσκευή × 25.000 = **€750K/μήνα**
+- Commission στα resellers: 15% × subscription revenue → κίνητρο πώλησης
+- 12 μήνες: **€9M** επιπλέον από reseller channel
+- Έτος 5 (10.000 resellers): **€18M/year** από hardware μέσω δικτύου
+
+**Σύνολο Εκτιμώμενου Εισοδήματος (Έτος 5):**
+| Κανάλι | Εκτιμώμενο Εισόδημα |
+|---|---|
+| B2C Subscriptions | €144M ARR |
+| Hardware (direct + reseller) | €80M (one-time) + €18M/year |
+| B2B Hospital SaaS | €3M ARR |
+| Insurance partnerships | €50M ARR |
+| **Σύνολο** | **~€215M ARR + €80M hardware** |
 
 **Συνολικά:** €197M+ ARR potential
 

@@ -24,6 +24,7 @@ from notifications import (
 from blockchain import record_fever_start, record_fever_end
 from hospital_api import router as hospital_router
 from thronos_integration import router as thronos_router
+from reseller_api import router as reseller_router
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -91,6 +92,7 @@ app.add_middleware(
 
 app.include_router(hospital_router)
 app.include_router(thronos_router)
+app.include_router(reseller_router)
 
 
 def get_db():
