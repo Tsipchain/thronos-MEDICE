@@ -1,13 +1,20 @@
 {
-  "name": "thronomedice-web",
+  "name": "thronomedice",
   "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev":   "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "cap:init": "npx cap init ThronomedICE org.thronoschain.medice --web-dir=.next",
+    "cap:add:android": "npx cap add android",
+    "cap:sync": "npx cap sync android",
+    "android:open": "npx cap open android"
   },
   "dependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/cli": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
     "next":      "^14.2.35",
     "react":     "^18.3.1",
     "react-dom": "^18.3.1",
