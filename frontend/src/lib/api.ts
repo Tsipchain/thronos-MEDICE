@@ -1,16 +1,34 @@
 function base(): string {
+  const fallback = 'https://thronos-medice.up.railway.app';
   if (typeof window !== 'undefined') {
     return localStorage.getItem('medice_api_url') ||
-      process.env.NEXT_PUBLIC_API_URL || '';
+      process.env.NEXT_PUBLIC_API_URL || fallback;
   }
-  return process.env.NEXT_PUBLIC_API_URL || '';
+  return process.env.NEXT_PUBLIC_API_URL || fallback;
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(base() + path, { ...init, cache: 'no-store' });
+  const payload = init?.body ? JSON.parse(String(init.body)) : undefined;
+  const safePayload = payload && typeof payload === 'object' ? { ...payload, password: payload.password ? '***' : undefined } : payload;
+  const res = await fetch(base() + path, {
+    ...init,
+    cache: 'no-store',
+    headers: {
+      Accept: 'application/json',
+      ...(init?.headers || {}),
+    },
+  });
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
-    try { const j = await res.json(); msg = j.detail || msg; } catch {}
+    let bodyText = '';
+    try {
+      bodyText = await res.text();
+      const j = JSON.parse(bodyText);
+      msg = j.detail || j.message || msg;
+    } catch {}
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('API request failed', { status: res.status, body: bodyText, payload: safePayload, path });
+    }
     throw new Error(msg);
   }
   return res.json();
@@ -27,6 +45,22 @@ export const createGuardian = (name: string, email: string, password: string) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, email, password }),
   });
+
+export const registerGuardianAndPatient = (payload: {
+  guardian: { name: string; email: string; password: string };
+  patient: {
+    name: string;
+    birth_date: string;
+    subscription: 'basic'|'bp'|'premium';
+    national_health_id?: string;
+    national_health_id_type?: string;
+    country?: string;
+  }
+}) => req<{ guardian_id: number; patient_id: number; status: string }>('/register', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(payload),
+});
 
 export const login = (email: string, password: string) =>
   req<{ guardian_id: number; name: string; email: string; patients: any[] }>('/login', {

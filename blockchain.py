@@ -147,6 +147,15 @@ class BlockchainService:
 _svc = BlockchainService()
 
 
+def get_status() -> dict:
+    return {
+        "connected": _svc.is_connected,
+        "rpc_url_configured": bool(THRONOS_RPC_URL),
+        "contract_configured": bool(CONTRACT_ADDRESS),
+        "account_configured": bool(PRIVATE_KEY),
+    }
+
+
 async def record_fever_start(patient_id: str, temp_x100: int, ts_unix: int) -> Optional[str]:
     return await _svc.record_fever_event(patient_id, temp_x100 / 100, datetime.fromtimestamp(ts_unix))
 
