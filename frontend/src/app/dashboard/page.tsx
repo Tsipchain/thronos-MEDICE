@@ -3,7 +3,7 @@ import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
 import Link from 'next/link';
-import { getVitals, getFeverHistory, getPatientPlan } from '@/lib/api';
+import { getVitals, getFeverHistory, getPatientPlan, getPatientDevices } from '@/lib/api';
 import VitalCard from '@/components/VitalCard';
 import FeverHistoryTable from '@/components/FeverHistoryTable';
 
@@ -72,6 +72,11 @@ function DashboardContent() {
     () => getPatientPlan(patient.id),
     { refreshInterval: 0 },
   );
+  const { data: devices } = useSWR(
+    ready ? ['devices', patient?.id] : null,
+    () => getPatientDevices(patient.id),
+    { refreshInterval: 30_000 },
+  );
 
   if (!ready) return null;
 
@@ -103,6 +108,7 @@ function DashboardContent() {
         <div className="flex gap-6 text-sm items-center">
           <span className="text-slate-200 font-medium">Dashboard</span>
           <Link href="/simulate" className="text-slate-400 hover:text-white transition">Προσομοίωση</Link>
+          <Link href="/connect" className="text-slate-400 hover:text-white transition">Συσκευή</Link>
           {guardian && (
             <span className="text-slate-400 text-xs hidden sm:block">👤 {guardian.name}</span>
           )}
@@ -199,6 +205,15 @@ function DashboardContent() {
         )}
 
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+          <h2 className="text-base font-semibold text-slate-700 mb-2">🔌 Συνδεδεμένες Συσκευές</h2>
+          <div className="mb-4 space-y-2">
+            {(devices ?? []).length === 0 && <p className="text-sm text-slate-400">Δεν υπάρχουν συσκευές.</p>}
+            {(devices ?? []).map((d: any) => (
+              <div key={d.device_id} className="text-sm border rounded p-2">
+                <b>{d.device_id}</b> · mode: {d.connection_mode || '—'} · last seen: {d.last_seen_at ? new Date(d.last_seen_at).toLocaleString('el-GR') : '—'}
+              </div>
+            ))}
+          </div>
           <h2 className="text-base font-semibold text-slate-700 mb-4">📋 Ιστορικό Πυρετών</h2>
           <FeverHistoryTable history={history ?? []} loading={!history && !vErr} />
         </div>
