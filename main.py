@@ -99,6 +99,14 @@ def _run_sqlite_startup_migrations() -> None:
             ("fever_rate", "FLOAT"),
             ("timestamp", "DATETIME"),
         ],
+        "devices": [
+            ("manufacturer", "TEXT"),
+            ("model", "TEXT"),
+            ("ble_profile", "TEXT"),
+            ("service_uuids_json", "TEXT"),
+            ("last_raw_payload", "TEXT"),
+            ("temperature_unit", "TEXT"),
+        ],
     }
 
     with engine.begin() as conn:
@@ -112,6 +120,12 @@ def _run_sqlite_startup_migrations() -> None:
                 connection_mode TEXT,
                 last_seen_at DATETIME,
                 battery_level INTEGER,
+                manufacturer TEXT,
+                model TEXT,
+                ble_profile TEXT,
+                service_uuids_json TEXT,
+                last_raw_payload TEXT,
+                temperature_unit TEXT,
                 created_at DATETIME
             )
         """))
@@ -646,11 +660,19 @@ def register_device(body: dict, db: Session = Depends(get_db)):
     if not patient:
         raise HTTPException(404, "Patient not found")
     existing = db.query(Device).filter(Device.device_id == device_id).first()
+    service_uuids = body.get("service_uuids")
+    service_uuids_json = json.dumps(service_uuids) if isinstance(service_uuids, list) else body.get("service_uuids_json")
     if existing:
         existing.patient_id = patient_id
         existing.device_type = body.get("device_type")
         existing.firmware_version = body.get("firmware_version")
         existing.connection_mode = body.get("connection_mode")
+        existing.manufacturer = body.get("manufacturer")
+        existing.model = body.get("model")
+        existing.ble_profile = body.get("ble_profile")
+        existing.service_uuids_json = service_uuids_json
+        existing.last_raw_payload = body.get("last_raw_payload")
+        existing.temperature_unit = body.get("temperature_unit")
         db.commit()
         return {"status": "ok", "id": existing.id, "device_id": existing.device_id}
     d = Device(
@@ -659,6 +681,12 @@ def register_device(body: dict, db: Session = Depends(get_db)):
         device_type=body.get("device_type"),
         firmware_version=body.get("firmware_version"),
         connection_mode=body.get("connection_mode"),
+        manufacturer=body.get("manufacturer"),
+        model=body.get("model"),
+        ble_profile=body.get("ble_profile"),
+        service_uuids_json=service_uuids_json,
+        last_raw_payload=body.get("last_raw_payload"),
+        temperature_unit=body.get("temperature_unit"),
         created_at=datetime.utcnow(),
     )
     db.add(d)
@@ -677,6 +705,12 @@ def patient_devices(patient_id: int, db: Session = Depends(get_db)):
             "connection_mode": d.connection_mode,
             "last_seen_at": d.last_seen_at,
             "battery_level": d.battery_level,
+            "manufacturer": d.manufacturer,
+            "model": d.model,
+            "ble_profile": d.ble_profile,
+            "service_uuids_json": d.service_uuids_json,
+            "last_raw_payload": d.last_raw_payload,
+            "temperature_unit": d.temperature_unit,
             "created_at": d.created_at,
         }
         for d in db.query(Device).filter(Device.patient_id == patient_id).all()
@@ -691,6 +725,11 @@ def device_heartbeat(device_id: str, body: dict, db: Session = Depends(get_db)):
     d.last_seen_at = datetime.utcnow()
     if body.get("battery_level") is not None:
         d.battery_level = int(body["battery_level"])
+    for key in ("manufacturer", "model", "ble_profile", "service_uuids_json", "last_raw_payload", "temperature_unit"):
+        if body.get(key) is not None:
+            setattr(d, key, body.get(key))
+    if isinstance(body.get("service_uuids"), list):
+        d.service_uuids_json = json.dumps(body["service_uuids"])
     db.commit()
     return {"status": "ok", "device_id": d.device_id, "last_seen_at": d.last_seen_at}
 

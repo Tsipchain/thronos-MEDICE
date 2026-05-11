@@ -110,6 +110,12 @@ class Device(Base):
     connection_mode   = Column(String, nullable=True)
     last_seen_at      = Column(DateTime, nullable=True)
     battery_level     = Column(Integer, nullable=True)
+    manufacturer      = Column(String, nullable=True)
+    model             = Column(String, nullable=True)
+    ble_profile       = Column(String, nullable=True)
+    service_uuids_json = Column(String, nullable=True)
+    last_raw_payload  = Column(String, nullable=True)
+    temperature_unit  = Column(String, nullable=True)
     created_at        = Column(DateTime, default=datetime.utcnow)
     patient           = relationship("Patient", back_populates="devices")
 
