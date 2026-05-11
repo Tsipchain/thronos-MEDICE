@@ -2,8 +2,9 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'ThronomedICE — Παρακολούθηση Ασθενών',
+  title: 'ThronomedICE',
   description: 'Σύστημα παρακολούθησης ζωτικών σημείων',
+  manifest: '/manifest.webmanifest',
   icons: {
     icon: [{ url: '/icon.svg', type: 'image/svg+xml' }],
     shortcut: '/icon.svg',

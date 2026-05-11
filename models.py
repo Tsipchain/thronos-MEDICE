@@ -57,6 +57,7 @@ class Patient(Base):
     guardian        = relationship("Guardian", back_populates="patients")
     readings        = relationship("TempReading", back_populates="patient")
     fever_events    = relationship("FeverEvent", back_populates="patient")
+    devices         = relationship("Device", back_populates="patient")
 
     @property
     def bp_subscription(self) -> bool:
@@ -97,6 +98,26 @@ class FeverEvent(Base):
     rapid_rise        = Column(Boolean, default=False)  # Fever rose >0.8°C in 30 min
     blockchain_tx     = Column(String, nullable=True)
     patient           = relationship("Patient", back_populates="fever_events")
+
+
+class Device(Base):
+    __tablename__ = "devices"
+    id                = Column(Integer, primary_key=True)
+    patient_id        = Column(Integer, ForeignKey("patients.id"))
+    device_id         = Column(String, unique=True)
+    device_type       = Column(String, nullable=True)
+    firmware_version  = Column(String, nullable=True)
+    connection_mode   = Column(String, nullable=True)
+    last_seen_at      = Column(DateTime, nullable=True)
+    battery_level     = Column(Integer, nullable=True)
+    manufacturer      = Column(String, nullable=True)
+    model             = Column(String, nullable=True)
+    ble_profile       = Column(String, nullable=True)
+    service_uuids_json = Column(String, nullable=True)
+    last_raw_payload  = Column(String, nullable=True)
+    temperature_unit  = Column(String, nullable=True)
+    created_at        = Column(DateTime, default=datetime.utcnow)
+    patient           = relationship("Patient", back_populates="devices")
 
 
 class HospitalAccess(Base):
