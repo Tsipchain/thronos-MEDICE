@@ -1,4 +1,4 @@
-import { postReading, registerDevice } from './api';
+import { postDeviceHeartbeat, postReading, registerDevice } from './api';
 
 type BleDevice = { deviceId: string; name?: string; uuids?: string[]; profile?: string };
 const HTS = '00001809-0000-1000-8000-00805f9b34fb';
@@ -22,14 +22,18 @@ export async function scanDevices(profile: 'demo'|'standard_health_thermometer'|
   }
   const BluetoothLe = await ble();
   if (!BluetoothLe) return [];
-  await BluetoothLe.initialize();
-  const found: BleDevice[] = [];
-  await BluetoothLe.requestLEScan({ services: [] }, (r: any) => {
-    found.push({ deviceId: r.device.deviceId, name: r.device.name, uuids: r.uuids });
-  });
-  await new Promise(r => setTimeout(r, 4000));
-  await BluetoothLe.stopLEScan();
-  return found;
+  try {
+    await BluetoothLe.initialize();
+    const found: BleDevice[] = [];
+    await BluetoothLe.requestLEScan({ services: [] }, (r: any) => {
+      found.push({ deviceId: r.device.deviceId, name: r.device.name, uuids: r.uuids });
+    });
+    await new Promise(r => setTimeout(r, 4000));
+    await BluetoothLe.stopLEScan();
+    return found;
+  } catch (err: any) {
+    return [{ deviceId: 'THR-MEDICE-DEMO-001', name: 'Demo Thermometer', profile: 'demo', note: `Use Android APK for real Bluetooth connection. ${err?.message || ''}` }];
+  }
 }
 
 export async function connectDevice(deviceId: string) {
@@ -48,11 +52,22 @@ export async function discoverDeviceProfile(deviceId: string) {
 }
 
 export function parseHealthThermometerMeasurement(dataView: DataView) {
+  const toSigned = (v: number, bits: number) => (v & (1 << (bits - 1))) ? v - (1 << bits) : v;
+  const parseIeee11073Float32 = (view: DataView, offset: number) => {
+    const b0 = view.getUint8(offset);
+    const b1 = view.getUint8(offset + 1);
+    const b2 = view.getUint8(offset + 2);
+    const expRaw = view.getUint8(offset + 3);
+    const mantissaRaw = b0 | (b1 << 8) | (b2 << 16);
+    const mantissa = toSigned(mantissaRaw, 24);
+    const exponent = toSigned(expRaw, 8);
+    return mantissa * Math.pow(10, exponent);
+  };
+
   const flags = dataView.getUint8(0);
   const isFahrenheit = (flags & 0x01) !== 0;
-  const tempRaw = dataView.getInt32(1, true);
-  const tempC = tempRaw / 100;
-  const temperature = isFahrenheit ? ((tempC - 32) * 5) / 9 : tempC;
+  const tempValue = parseIeee11073Float32(dataView, 1);
+  const temperature = isFahrenheit ? ((tempValue - 32) * 5) / 9 : tempValue;
   return { temperature, unit: isFahrenheit ? 'F' : 'C' };
 }
 
@@ -75,7 +90,7 @@ export async function sendBleReadingToBackend(patientId: number, deviceId: strin
     bp_valid: false,
   });
   if (battery !== null) {
-    await fetch((window as any).location.origin + '/api/noop').catch(() => null);
+    await postDeviceHeartbeat(deviceId, { battery_level: battery }).catch(() => null);
   }
 }
 
@@ -88,12 +103,16 @@ export async function subscribeTemperature(deviceId: string, patientId: number, 
   }
   const BluetoothLe = await ble();
   await BluetoothLe?.startNotifications({ deviceId, service: HTS, characteristic: TEMP_MEAS }, async (r: any) => {
-    if (!r.value) return;
-    const bytes = Uint8Array.from(atob(r.value), c => c.charCodeAt(0));
-    const parsed = parseHealthThermometerMeasurement(new DataView(bytes.buffer));
-    const battery = await readBatteryLevel(deviceId);
-    await sendBleReadingToBackend(patientId, deviceId, parsed.temperature, battery);
-    onReading({ ...parsed, battery, source: 'ble' });
+    try {
+      if (!r.value) return;
+      const bytes = Uint8Array.from(atob(r.value), c => c.charCodeAt(0));
+      const parsed = parseHealthThermometerMeasurement(new DataView(bytes.buffer));
+      const battery = await readBatteryLevel(deviceId);
+      await sendBleReadingToBackend(patientId, deviceId, parsed.temperature, battery);
+      onReading({ ...parsed, battery, source: 'ble' });
+    } catch (err: any) {
+      onReading({ source: 'ble', error: err?.message || 'Failed to parse BLE notification' });
+    }
   });
   return async () => {
     await BluetoothLe?.stopNotifications({ deviceId, service: HTS, characteristic: TEMP_MEAS });
