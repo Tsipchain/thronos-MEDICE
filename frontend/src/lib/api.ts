@@ -140,3 +140,17 @@ export const registerDevice = (data: {
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(data),
 });
+
+export const postDeviceHeartbeat = (deviceId: string, data: {
+  battery_level?: number;
+  manufacturer?: string;
+  model?: string;
+  ble_profile?: string;
+  service_uuids_json?: string;
+  last_raw_payload?: string;
+  temperature_unit?: string;
+}) => req<{ status: string; device_id: string; last_seen_at: string }>(`/devices/${encodeURIComponent(deviceId)}/heartbeat`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(data),
+});
