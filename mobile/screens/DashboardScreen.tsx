@@ -5,6 +5,7 @@ import {
 } from "react-native";
 import { BLEContext } from "../context/BLEContext";
 import { APIContext } from "../context/APIContext";
+import type { DeviceType } from "../context/BLEContext";
 
 // ── Blood pressure helpers ──────────────────────────────────────────────────
 
@@ -40,11 +41,17 @@ const BP_CARD_BG: Record<BpLevel, string> = {
   unknown:     "rgba(0,0,0,0.15)",
 };
 
+const DEVICE_OPTIONS: { label: string; value: DeviceType }[] = [
+  { label: "ThronomedICE", value: "ThronomedICE" },
+  { label: "ThermoDOC",    value: "ThermoDOC" },
+];
+
 // ── Component ───────────────────────────────────────────────────────────────
 
 export default function DashboardScreen() {
   const {
     connected, scanning,
+    deviceType, setDeviceType,
     temperature, spo2, bpm,
     systolic, diastolic, bpValid,
     connect, disconnect,
@@ -62,7 +69,6 @@ export default function DashboardScreen() {
   const isBpCrisis   = bpLevel === "crisis";
   const isBpWarning  = bpLevel === "high_stage2" || bpLevel === "high_stage1" || bpLevel === "low";
 
-  // Overall background: crisis (any) → red, warning → orange, normal → green
   const bgColor =
     isSpo2Crit || isHighFever || isBpCrisis ? "#C0392B"
     : isSpo2Low || isFever    || isBpWarning ? "#E67E22"
@@ -92,41 +98,71 @@ export default function DashboardScreen() {
         </Text>
       </View>
 
-      {/* SpO2 + HR row */}
-      <View style={styles.vitalRow}>
-        <View style={[styles.vitalCard,
-          isSpo2Crit ? styles.danger : isSpo2Low ? styles.warn : null]}>
-          <Text style={styles.vitalLabel}>🧠 SpO₂</Text>
-          <Text style={styles.vitalValue}>{spo2 !== null ? `${spo2.toFixed(0)}%` : "---"}</Text>
-          <Text style={styles.vitalSub}>
-            {isSpo2Crit ? "🚨 Κρίσιμο" : isSpo2Low ? "⚠️ Χαμηλό" : spo2 !== null ? "✅ OK" : ""}
-          </Text>
-        </View>
+      {/* SpO2 + HR row — hidden for ThermoDOC (temp-only device) */}
+      {deviceType === "ThronomedICE" && (
+        <View style={styles.vitalRow}>
+          <View style={[styles.vitalCard,
+            isSpo2Crit ? styles.danger : isSpo2Low ? styles.warn : null]}>
+            <Text style={styles.vitalLabel}>🧠 SpO₂</Text>
+            <Text style={styles.vitalValue}>{spo2 !== null ? `${spo2.toFixed(0)}%` : "---"}</Text>
+            <Text style={styles.vitalSub}>
+              {isSpo2Crit ? "🚨 Κρίσιμο" : isSpo2Low ? "⚠️ Χαμηλό" : spo2 !== null ? "✅ OK" : ""}
+            </Text>
+          </View>
 
-        <View style={[styles.vitalCard, isHRAbnorm ? styles.warn : null]}>
-          <Text style={styles.vitalLabel}>❤️‍🩹 BPM</Text>
-          <Text style={styles.vitalValue}>{bpm !== null ? `${bpm}` : "---"}</Text>
-          <Text style={styles.vitalSub}>
-            {bpm !== null && bpm < 60  ? "⚠️ Βραδυκαρδία"
-           : bpm !== null && bpm > 130 ? "⚠️ Ταχυκαρδία"
-           : bpm !== null              ? "✅ OK" : ""}
-          </Text>
+          <View style={[styles.vitalCard, isHRAbnorm ? styles.warn : null]}>
+            <Text style={styles.vitalLabel}>❤️‍🩹 BPM</Text>
+            <Text style={styles.vitalValue}>{bpm !== null ? `${bpm}` : "---"}</Text>
+            <Text style={styles.vitalSub}>
+              {bpm !== null && bpm < 60  ? "⚠️ Βραδυκαρδία"
+             : bpm !== null && bpm > 130 ? "⚠️ Ταχυκαρδία"
+             : bpm !== null              ? "✅ OK" : ""}
+            </Text>
+          </View>
         </View>
-      </View>
+      )}
 
-      {/* Blood Pressure card */}
-      <View style={[styles.bpCard, { backgroundColor: BP_CARD_BG[bpLevel] }]}>
-        <View style={styles.bpHeader}>
-          <Text style={styles.bpLabel}>💓 Πίεση Αίματος</Text>
-          <Text style={styles.bpBadge}>{BP_LABEL[bpLevel]}</Text>
+      {/* Blood Pressure card — hidden for ThermoDOC */}
+      {deviceType === "ThronomedICE" && (
+        <View style={[styles.bpCard, { backgroundColor: BP_CARD_BG[bpLevel] }]}>
+          <View style={styles.bpHeader}>
+            <Text style={styles.bpLabel}>💓 Πίεση Αίματος</Text>
+            <Text style={styles.bpBadge}>{BP_LABEL[bpLevel]}</Text>
+          </View>
+          <Text style={styles.bpValue}>
+            {bpValid && systolic !== null && diastolic !== null
+              ? `${systolic} / ${diastolic}`
+              : "--- / ---"}
+          </Text>
+          <Text style={styles.bpUnit}>mmHg  (συστολική / διαστολική)</Text>
         </View>
-        <Text style={styles.bpValue}>
-          {bpValid && systolic !== null && diastolic !== null
-            ? `${systolic} / ${diastolic}`
-            : "--- / ---"}
-        </Text>
-        <Text style={styles.bpUnit}>mmHg  (συστολική / διαστολική)</Text>
-      </View>
+      )}
+
+      {/* Device type picker — shown only when disconnected */}
+      {!connected && (
+        <View style={styles.devicePicker}>
+          <Text style={styles.devicePickerLabel}>Τύπος Συσκευής</Text>
+          <View style={styles.deviceToggleRow}>
+            {DEVICE_OPTIONS.map(({ label, value }) => (
+              <TouchableOpacity
+                key={value}
+                style={[
+                  styles.deviceToggleBtn,
+                  deviceType === value && styles.deviceToggleBtnActive,
+                ]}
+                onPress={() => setDeviceType(value)}
+              >
+                <Text style={[
+                  styles.deviceToggleText,
+                  deviceType === value && styles.deviceToggleTextActive,
+                ]}>
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      )}
 
       {/* BLE connect button */}
       <TouchableOpacity style={styles.bleBtn} onPress={connected ? disconnect : connect} disabled={scanning}>
@@ -172,6 +208,17 @@ const styles = StyleSheet.create({
                      paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12 },
   bpValue:         { fontSize: 48, color: "#fff", fontWeight: "bold", textAlign: "center" },
   bpUnit:          { fontSize: 11, color: "rgba(255,255,255,0.7)", textAlign: "center", marginTop: 2 },
+
+  devicePicker:        { width: "100%", marginBottom: 12 },
+  devicePickerLabel:   { fontSize: 12, color: "rgba(255,255,255,0.75)", marginBottom: 6, textAlign: "center" },
+  deviceToggleRow:     { flexDirection: "row", gap: 10, justifyContent: "center" },
+  deviceToggleBtn:     { paddingHorizontal: 20, paddingVertical: 8, borderRadius: 18,
+                         backgroundColor: "rgba(0,0,0,0.2)", borderWidth: 1,
+                         borderColor: "rgba(255,255,255,0.3)" },
+  deviceToggleBtnActive: { backgroundColor: "rgba(255,255,255,0.25)",
+                           borderColor: "rgba(255,255,255,0.8)" },
+  deviceToggleText:    { color: "rgba(255,255,255,0.65)", fontSize: 13, fontWeight: "500" },
+  deviceToggleTextActive: { color: "#fff", fontWeight: "700" },
 
   bleBtn:          { backgroundColor: "rgba(0,0,0,0.25)", paddingHorizontal: 32, paddingVertical: 14,
                      borderRadius: 24, marginBottom: 16 },
