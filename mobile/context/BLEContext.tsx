@@ -3,11 +3,14 @@ import { BleManager, Device } from "react-native-ble-plx";
 import { useContext } from "react";
 import { Buffer } from "buffer";
 import { APIContext } from "./APIContext";
+import { connectThermoDOC } from "../services/thermodoc";
 
 const TEMP_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 const TEMP_CHAR_UUID    = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 const VITAL_CHAR_UUID   = "beb5483e-36e1-4688-b7f5-ea07361b26aa";
 const PROV_CHAR_UUID    = "beb5483e-36e1-4688-b7f5-ea07361b26ab";
+
+export type DeviceType = "ThronomedICE" | "ThermoDOC";
 
 export const BLEContext = createContext<any>({});
 
@@ -16,6 +19,7 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
   const deviceRef = useRef<Device | null>(null);
   const [connected,   setConnected]   = useState(false);
   const [scanning,    setScanning]    = useState(false);
+  const [deviceType,  setDeviceType]  = useState<DeviceType>("ThronomedICE");
   const [temperature, setTemperature] = useState<number | null>(null);
   const [spo2,        setSpo2]        = useState<number | null>(null);
   const [bpm,         setBpm]         = useState<number | null>(null);
@@ -26,8 +30,7 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => () => { manager.destroy(); }, []);
 
-  const connect = async () => {
-    setScanning(true);
+  const connectThronomedICE = () => {
     manager.startDeviceScan(null, { allowDuplicates: false }, async (err, device) => {
       if (err || !device) { setScanning(false); return; }
       if (device.name !== "ThronomedICE") return;
@@ -40,15 +43,14 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
         setConnected(true);
         setScanning(false);
 
-        // Full reading every 5 min: temp + vitals + optional BP
         d.monitorCharacteristicForService(TEMP_SERVICE_UUID, TEMP_CHAR_UUID, (e, char) => {
           if (e || !char?.value) return;
           const json = JSON.parse(Buffer.from(char.value, "base64").toString("utf8"));
-          const temp: number = json.temperature;
-          const s2: number   = json.spo2 ?? -1;
-          const hr: number   = json.bpm  ?? -1;
-          const sys: number  = json.systolic  ?? -1;
-          const dia: number  = json.diastolic ?? -1;
+          const temp: number  = json.temperature;
+          const s2: number    = json.spo2 ?? -1;
+          const hr: number    = json.bpm  ?? -1;
+          const sys: number   = json.systolic  ?? -1;
+          const dia: number   = json.diastolic ?? -1;
           const bpOk: boolean = !!json.bp_valid;
 
           setTemperature(temp);
@@ -75,7 +77,6 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
           }
         });
 
-        // Vitals-only refresh every 1 min (no temp, no upload)
         d.monitorCharacteristicForService(TEMP_SERVICE_UUID, VITAL_CHAR_UUID, (e, char) => {
           if (e || !char?.value) return;
           const json = JSON.parse(Buffer.from(char.value, "base64").toString("utf8"));
@@ -85,6 +86,26 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
       } catch { setScanning(false); }
     });
     setTimeout(() => { manager.stopDeviceScan(); setScanning(false); }, 15000);
+  };
+
+  const connect = async () => {
+    setScanning(true);
+    if (deviceType === "ThermoDOC") {
+      await connectThermoDOC(
+        manager,
+        (tempC) => {
+          setTemperature(tempC);
+          if (patient?.id) {
+            postReading({ patient_id: String(patient.id), temperature: tempC });
+          }
+        },
+        (d) => { deviceRef.current = d; setConnected(true); setScanning(false); },
+        ()  => { deviceRef.current = null; setConnected(false); setScanning(false); },
+        ()  => setScanning(false),
+      );
+    } else {
+      connectThronomedICE();
+    }
   };
 
   const disconnect = async () => {
@@ -99,7 +120,6 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
     setBpValid(false);
   };
 
-  // Send WiFi credentials + patient ID to device over BLE (first-time setup)
   const provision = async (newPatientId: string, ssid: string, pass: string) => {
     const d = deviceRef.current;
     if (!d || !connected) throw new Error("Not connected");
@@ -111,6 +131,7 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
   return (
     <BLEContext.Provider value={{
       connected, scanning,
+      deviceType, setDeviceType,
       temperature, spo2, bpm,
       systolic, diastolic, bpValid,
       connect, disconnect, provision,
