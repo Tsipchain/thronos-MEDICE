@@ -41,7 +41,7 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
 
   const connectThronomedICE = () => {
     manager.startDeviceScan(null, { allowDuplicates: false }, async (err, device) => {
-      if (err || !device) { setScanning(false); return; }
+      if (err || !device) { setBleState("error"); return; }
       if (device.name !== "ThronomedICE") return;
 
       manager.stopDeviceScan();
@@ -49,8 +49,7 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
         const d = await device.connect();
         await d.discoverAllServicesAndCharacteristics();
         deviceRef.current = d;
-        setConnected(true);
-        setScanning(false);
+        setBleState("paired");
 
         d.monitorCharacteristicForService(TEMP_SERVICE_UUID, TEMP_CHAR_UUID, (e, char) => {
           if (e || !char?.value) return;
@@ -70,20 +69,7 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
             setDiastolic(dia);
             setBpValid(true);
           }
-
-          if (patient?.id) {
-            postReading({
-              patient_id:  String(patient.id),
-              temperature: temp,
-              spo2:        s2 > 0  ? s2  : undefined,
-              bpm:         hr > 0  ? hr  : undefined,
-              systolic:    bpOk && sys > 0 ? sys : undefined,
-              diastolic:   bpOk && dia > 0 ? dia : undefined,
-              spo2_valid:  s2 > 0 && !!json.spo2_valid,
-              bpm_valid:   hr > 0 && !!json.bpm_valid,
-              bp_valid:    bpOk && sys > 0 && dia > 0,
-            });
-          }
+          addPendingReading({ temperature: temp, device_id: "thnm", spo2: s2, bpm: hr });
         });
 
         d.monitorCharacteristicForService(TEMP_SERVICE_UUID, VITAL_CHAR_UUID, (e, char) => {
@@ -92,9 +78,32 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
           if (json.spo2 > 0) setSpo2(json.spo2);
           if (json.bpm  > 0) setBpm(json.bpm);
         });
-      } catch { setScanning(false); }
+      } catch { setBleState("error"); }
     });
-    setTimeout(() => { manager.stopDeviceScan(); setScanning(false); }, 15000);
+    setTimeout(() => { manager.stopDeviceScan(); }, 15000);
+  };
+
+  const syncBufferedReadings = async () => {
+    if (pendingReadings.length === 0) return;
+    try {
+      setBleState("syncing");
+      const res = await axios.post(`${apiUrl}/readings/bulk`, pendingReadings);
+      if (res.data.processed > 0) {
+        setLastSyncTime(new Date());
+        setPendingReadings([]);
+      }
+      setBleState("paired");
+    } catch (e) {
+      console.warn("Sync failed:", e);
+      setBleState("paired");
+    }
+  };
+
+  const addPendingReading = (reading: any) => {
+    setPendingReadings(prev => [...prev, reading]);
+    if (patient?.id && reading.temperature) {
+      postReading({ patient_id: String(patient.id), temperature: reading.temperature });
+    }
   };
 
   const syncBufferedReadings = async () => {

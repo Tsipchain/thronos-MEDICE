@@ -7,55 +7,17 @@ import axios from "axios";
 import { APIContext } from "../context/APIContext";
 import { BLEContext } from "../context/BLEContext";
 
-// ── Small reusable bits ─────────────────────────────────────────────────────
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <View style={s.section}>
-      <Text style={s.sectionTitle}>{title}</Text>
-      {children}
-    </View>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <View style={s.field}>
-      <Text style={s.fieldLabel}>{label}</Text>
-      {children}
-    </View>
-  );
-}
-
-function Btn({
-  label, onPress, disabled = false, variant = "primary", loading = false,
-}: {
-  label: string; onPress: () => void;
-  disabled?: boolean; variant?: "primary" | "secondary" | "danger";
-  loading?: boolean;
-}) {
-  const bg = variant === "danger" ? "#C0392B" : variant === "secondary" ? "#7F8C8D" : "#2C3E50";
-  return (
-    <TouchableOpacity
-      style={[s.btn, { backgroundColor: bg }, disabled && s.btnDisabled]}
-      onPress={onPress} disabled={disabled || loading}>
-      {loading
-        ? <ActivityIndicator color="#fff" size="small" />
-        : <Text style={s.btnText}>{label}</Text>}
-    </TouchableOpacity>
-  );
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={s.infoRow}>
-      <Text style={s.infoLabel}>{label}</Text>
-      <Text style={s.infoValue}>{value}</Text>
-    </View>
-  );
-}
-
-// ── Main screen ─────────────────────────────────────────────────────────────
+const HEALTH_ID_TYPES = {
+  "amka":  "ΑΜΚΑ (Ελλάδα)",
+  "kvnr":  "KVNR (Γερμανία)",
+  "svnr":  "SVNR (Αυστρία)",
+  "snils": "СНИЛС (Ρωσία)",
+  "nhs":   "NHS (UK)",
+  "nir":   "NIR (Γαλλία)",
+  "bsn":   "BSN (Ολλανδία)",
+  "phn":   "PHN (Καναδά)",
+  "ssn":   "SSN (ΗΠΑ)",
+};
 
 const HEALTH_ID_TYPES = {
   "amka":  "ΑΜΚΑ (Ελλάδα)",
@@ -79,18 +41,14 @@ export default function SettingsScreen() {
   } = useContext(APIContext);
   const { connected, scanning, connect, disconnect, provision, deviceType, setDeviceType } = useContext(BLEContext);
 
-  // ─ API URL
   const [inputUrl, setInputUrl] = useState(apiUrl);
-
-  // ─ Registration
   const [regGuardianName,  setRegGuardianName]  = useState("");
   const [regGuardianEmail, setRegGuardianEmail] = useState("");
   const [regPatientName,   setRegPatientName]   = useState("");
-  const [regPatientDob,    setRegPatientDob]    = useState("");  // YYYY-MM-DD
+  const [regPatientDob,    setRegPatientDob]    = useState("");
   const [regSubscription,  setRegSubscription]  = useState<"basic" | "bp">("basic");
   const [registering,      setRegistering]      = useState(false);
 
-  // ─ Device provisioning
   const [provSsid,    setProvSsid]    = useState("");
   const [provPass,    setProvPass]    = useState("");
   const [provisioning, setProvisioning] = useState(false);
@@ -122,7 +80,6 @@ export default function SettingsScreen() {
     setRegistering(true);
     try {
       const gId = await createGuardian(regGuardianName.trim(), regGuardianEmail.trim());
-      // 5-month free trial from today
       const freeUntil = new Date();
       freeUntil.setMonth(freeUntil.getMonth() + 5);
       await createPatient({
@@ -234,7 +191,6 @@ export default function SettingsScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView style={s.container} contentContainerStyle={{ paddingBottom: 40 }}>
 
-        {/* ── 1. API server ──────────────────────────────────────────── */}
         <Section title="🌐 Σύνδεση Διακομιστή">
           <Field label="API URL">
             <TextInput
@@ -249,7 +205,6 @@ export default function SettingsScreen() {
           <Btn label="Αποθήκευση" onPress={saveApiUrl} />
         </Section>
 
-        {/* ── 2. Account info or registration ──────────────────────── */}
         {guardian && patient ? (
           <>
             <Section title="👤 Λογαριασμός">
@@ -355,7 +310,6 @@ export default function SettingsScreen() {
           </Section>
         )}
 
-        {/* ── 3. Device provisioning ───────────────────────────────── */}
         <Section title="📡 Ρύθμιση Συσκευής">
           <Field label="Τύπος Συσκευής">
             <TouchableOpacity style={s.pickerBtn} onPress={() =>
@@ -409,10 +363,74 @@ export default function SettingsScreen() {
           <View style={s.provInfo}>
             <Text style={s.provInfoText}>
               💡 Μετά την αποστολή, η συσκευή αποθηκεύει τις ρυθμίσεις στη μνήμην της και συνδέεται αυτόνομα
-              στο WiFi σε κάθε εκκίνηση. Δεν χρειάζεται ξανακαταχώρηση αρχείου (OTA).
+              στο WiFi σε κάθε εκκίνηση.
             </Text>
           </View>
         </Section>
+
+        <Modal visible={healthIdModal} transparent animationType="slide">
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+            <View style={s.modalOverlay}>
+              <View style={s.modalContent}>
+                <Text style={s.modalTitle}>📋 Εθνική Αναγνώρηση</Text>
+
+                <Field label="Τύπος Αναγνώρισης">
+                  <TouchableOpacity style={s.pickerBtn} onPress={() =>
+                    Alert.alert("Τύπος Αναγνώρισης", "",
+                      Object.entries(HEALTH_ID_TYPES).map(([key, label]) => ({
+                        text: label,
+                        onPress: () => setHealthIdType(key),
+                      }))
+                    )}
+                  >
+                    <Text style={s.pickerBtnText}>{HEALTH_ID_TYPES[healthIdType as keyof typeof HEALTH_ID_TYPES]}</Text>
+                  </TouchableOpacity>
+                </Field>
+
+                <Field label="Αριθμός Αναγνώρισης">
+                  <TextInput
+                    style={s.input}
+                    value={healthIdValue}
+                    onChangeText={(v) => {
+                      setHealthIdValue(v);
+                      setHealthIdValid(null);
+                    }}
+                    placeholder="Εισάγετε αριθμό"
+                    autoCapitalize="none"
+                  />
+                </Field>
+
+                <Btn
+                  label="Έλεγχος"
+                  onPress={() => validateHealthId(healthIdType, healthIdValue)}
+                />
+
+                {healthIdValid !== null && (
+                  <View style={[s.validationResult, healthIdValid ? s.validationOk : s.validationErr]}>
+                    <Text style={s.validationText}>{healthIdMsg}</Text>
+                  </View>
+                )}
+
+                <View style={s.modalBtnRow}>
+                  <Btn
+                    label="Ακύρωση"
+                    onPress={() => {
+                      setHealthIdModal(false);
+                      setHealthIdValue("");
+                      setHealthIdValid(null);
+                    }}
+                    variant="secondary"
+                  />
+                  <Btn
+                    label="Αποθήκευση"
+                    onPress={saveHealthId}
+                    disabled={!healthIdValid}
+                  />
+                </View>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
 
       </ScrollView>
 
@@ -483,8 +501,6 @@ export default function SettingsScreen() {
     </KeyboardAvoidingView>
   );
 }
-
-// ── Styles ───────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
   container:    { flex: 1, backgroundColor: "#F0F2F5" },
