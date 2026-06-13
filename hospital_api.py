@@ -15,6 +15,15 @@ router = APIRouter(prefix="/hospital", tags=["hospital"])
 HOSPITAL_API_KEY = os.getenv("HOSPITAL_API_KEY", "")
 
 
+def get_db():
+    from main import SessionLocal
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 def _verify_hospital_key(x_hospital_key: str = Header(...), db: Session = Depends(get_db)):
     """Verify hospital API key from header."""
     if not x_hospital_key:
@@ -23,15 +32,6 @@ def _verify_hospital_key(x_hospital_key: str = Header(...), db: Session = Depend
     if not hospital:
         raise HTTPException(status_code=403, detail="Invalid or inactive hospital API key")
     return hospital
-
-
-def get_db():
-    from main import SessionLocal
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 def _has_access(patient_id: int, hospital_id: int, db: Session) -> bool:
