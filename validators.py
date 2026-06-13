@@ -1,1 +1,186 @@
-"""\nValidators for national health IDs across different countries.\nSupports: AMKA (GR), KVNR (DE), SVNR (AT), SNILS (RU), NHS (GB), NIR (FR), BSN (NL), PHS (CA), SSN (US)\n"""\n\n\ndef luhn_checksum(card_number: str) -> bool:\n    """Validate using Luhn algorithm."""\n    def digits_of(n):\n        return [int(d) for d in str(n)]\n    digits = digits_of(card_number)\n    odd_digits = digits[-1::-2]\n    even_digits = digits[-2::-2]\n    checksum = sum(odd_digits)\n    for d in even_digits:\n        checksum += sum(digits_of(d * 2))\n    return checksum % 10 == 0\n\n\ndef validate_amka(amka: str) -> tuple[bool, str]:\n    """\n    Validate Greek AMKA (ΑΜΚ Α - Αριθμός Μητρώου Κοινωνικής Ασφάλειας).\n    Must be 11 digits with valid Luhn checksum.\n    Format: HHHHHHDDMMYY\n    HH = birth location code\n    DD = birth day\n    MM = birth month\n    YY = birth year (last 2 digits)\n    """\n    amka = amka.strip()\n    if not amka.isdigit():\n        return False, "AMKA πρέπει να περιέχει μόνο αριθμούς"\n    if len(amka) != 11:\n        return False, f"AMKA πρέπει να έχει 11 ψηφία (έχει {len(amka)})"\n\n    # Check day and month\n    day = int(amka[4:6])\n    month = int(amka[6:8])\n    if day < 1 or day > 31:\n        return False, "Μέρα γέννησης πρέπει να είναι 1-31"\n    if month < 1 or month > 12:\n        return False, "Μήνας γέννησης πρέπει να είναι 1-12"\n\n    if not luhn_checksum(amka):\n        return False, "AMKA: Άκυρο άθροισμα ελέγχου"\n\n    return True, "Έγκυρη AMKA"\n\n\ndef validate_kvnr(kvnr: str) -> tuple[bool, str]:\n    """\n    Validate German KVNR (Krankenversicherungsnummer).\n    10 digit format: KKBBEEEEEE\n    KK = health insurance company code\n    BB = date of birth (2 digits)\n    EEEE = individual number\n    E = check digit\n    """\n    kvnr = kvnr.replace(" ", "").replace("-", "").strip()\n    if not kvnr.isdigit():\n        return False, "KVNR muss nur Ziffern enthalten"\n    if len(kvnr) != 10:\n        return False, f"KVNR muss 10 Ziffern haben (hat {len(kvnr)})"\n    return True, "Gültige KVNR"\n\n\ndef validate_svnr(svnr: str) -> tuple[bool, str]:\n    """\n    Validate Austrian SVNR (Sozialversicherungsnummer).\n    10 digit format with specific structure.\n    """\n    svnr = svnr.replace(" ", "").replace("-", "").strip()\n    if not svnr.isdigit():\n        return False, "SVNR muss nur Ziffern enthalten"\n    if len(svnr) != 10:\n        return False, f"SVNR muss 10 Ziffern haben (hat {len(svnr)})"\n    return True, "Gültige SVNR"\n\n\ndef validate_snils(snils: str) -> tuple[bool, str]:\n    """\n    Validate Russian СНИЛС (Страховой номер индивидуального лицевого счета).\n    11 digit number with check digits.\n    """\n    snils = snils.replace(" ", "").replace("-", "").strip()\n    if not snils.isdigit():\n        return False, "СНИЛС должен содержать только цифры"\n    if len(snils) != 11:\n        return False, f"СНИЛС должен иметь 11 цифр (имеет {len(snils)})"\n    return True, "Действительный СНИЛС"\n\n\ndef validate_nhs(nhs: str) -> tuple[bool, str]:\n    """\n    Validate UK NHS number.\n    10 digit format.\n    """\n    nhs = nhs.replace(" ", "").replace("-", "").strip()\n    if not nhs.isdigit():\n        return False, "NHS number must contain only digits"\n    if len(nhs) != 10:\n        return False, f"NHS number must have 10 digits (has {len(nhs)})"\n    return True, "Valid NHS number"\n\n\ndef validate_nir(nir: str) -> tuple[bool, str]:\n    """\n    Validate French NIR (Numéro d'Inscription au Répertoire / INSEE).\n    15 digit number.\n    """\n    nir = nir.replace(" ", "").strip()\n    if not nir.isdigit():\n        return False, "NIR doit contenir uniquement des chiffres"\n    if len(nir) != 15:\n        return False, f"NIR doit avoir 15 chiffres (a {len(nir)})"\n    return True, "NIR valide"\n\n\ndef validate_bsn(bsn: str) -> tuple[bool, str]:\n    """\n    Validate Dutch BSN (Burgerservicenummer).\n    9 digit number with checksum.\n    """\n    bsn = bsn.replace(" ", "").replace("-", "").strip()\n    if not bsn.isdigit():\n        return False, "BSN mag alleen nummers bevatten"\n    if len(bsn) != 9:\n        return False, f"BSN moet 9 cijfers hebben (heeft {len(bsn)})"\n    return True, "Geldig BSN"\n\n\ndef validate_phn(phn: str) -> tuple[bool, str]:\n    """\n    Validate Canadian Provincial Health Number.\n    Format varies by province (typically 10-12 chars).\n    """\n    phn = phn.replace(" ", "").replace("-", "").strip().upper()\n    if len(phn) < 10 or len(phn) > 12:\n        return False, f"PHN must be 10-12 characters (has {len(phn)})"\n    if not phn.replace(" ", "").isalnum():\n        return False, "PHN must contain only alphanumeric characters"\n    return True, "Valid PHN"\n\n\ndef validate_ssn(ssn: str) -> tuple[bool, str]:\n    """\n    Validate US Social Security Number.\n    Format: XXX-XX-XXXX (9 digits).\n    Note: This is format validation only, not authenticity validation.\n    """\n    ssn = ssn.replace(" ", "").replace("-", "").strip()\n    if not ssn.isdigit():\n        return False, "SSN must contain only digits"\n    if len(ssn) != 9:\n        return False, f"SSN must have 9 digits (has {len(ssn)})"\n    # Basic sanity checks\n    if ssn[:3] == "000" or ssn[3:5] == "00" or ssn[5:] == "0000":\n        return False, "Invalid SSN (invalid segment)"\n    if ssn[:3] == "666":\n        return False, "Invalid SSN (area 666 not assigned)"\n    if int(ssn[:3]) > 772:\n        return False, "Invalid SSN (area number too high)"\n    return True, "Valid SSN format"\n\n\ndef validate_health_id(health_id_type: str, health_id: str, country: str = None) -> tuple[bool, str]:\n    """\n    Main validator dispatcher.\n    Returns (is_valid, message)\n    """\n    validators = {\n        "amka":  validate_amka,\n        "kvnr":  validate_kvnr,\n        "svnr":  validate_svnr,\n        "snils": validate_snils,\n        "nhs":   validate_nhs,\n        "nir":   validate_nir,\n        "bsn":   validate_bsn,\n        "phn":   validate_phn,\n        "ssn":   validate_ssn,\n    }\n\n    if health_id_type not in validators:\n        return False, f"Άγνωστος τύπος αναγνώρισης: {health_id_type}"\n\n    return validators[health_id_type](health_id)\n
+"""
+Validators for national health IDs across different countries.
+Supports: AMKA (GR), KVNR (DE), SVNR (AT), SNILS (RU), NHS (GB), NIR (FR), BSN (NL), PHS (CA), SSN (US)
+"""
+
+
+def luhn_checksum(card_number: str) -> bool:
+    """Validate using Luhn algorithm."""
+    def digits_of(n):
+        return [int(d) for d in str(n)]
+    digits = digits_of(card_number)
+    odd_digits = digits[-1::-2]
+    even_digits = digits[-2::-2]
+    checksum = sum(odd_digits)
+    for d in even_digits:
+        checksum += sum(digits_of(d * 2))
+    return checksum % 10 == 0
+
+
+def validate_amka(amka: str) -> tuple[bool, str]:
+    """
+    Validate Greek AMKA (ΑΜΚ Α - Αριθμός Μητρώου Κοινωνικής Ασφάλειας).
+    Must be 11 digits with valid Luhn checksum.
+    Format: HHHHHHDDMMYY
+    HH = birth location code
+    DD = birth day
+    MM = birth month
+    YY = birth year (last 2 digits)
+    """
+    amka = amka.strip()
+    if not amka.isdigit():
+        return False, "AMKA πρέπει να περιέχει μόνο αριθμούς"
+    if len(amka) != 11:
+        return False, f"AMKA πρέπει να έχει 11 ψηφία (έχει {len(amka)})"
+
+    # Check day and month
+    day = int(amka[4:6])
+    month = int(amka[6:8])
+    if day < 1 or day > 31:
+        return False, "Μέρα γέννησης πρέπει να είναι 1-31"
+    if month < 1 or month > 12:
+        return False, "Μήνας γέννησης πρέπει να είναι 1-12"
+
+    if not luhn_checksum(amka):
+        return False, "AMKA: Άκυρο άθροισμα ελέγχου"
+
+    return True, "Έγκυρη AMKA"
+
+
+def validate_kvnr(kvnr: str) -> tuple[bool, str]:
+    """
+    Validate German KVNR (Krankenversicherungsnummer).
+    10 digit format: KKBBEEEEEE
+    KK = health insurance company code
+    BB = date of birth (2 digits)
+    EEEE = individual number
+    E = check digit
+    """
+    kvnr = kvnr.replace(" ", "").replace("-", "").strip()
+    if not kvnr.isdigit():
+        return False, "KVNR muss nur Ziffern enthalten"
+    if len(kvnr) != 10:
+        return False, f"KVNR muss 10 Ziffern haben (hat {len(kvnr)})"
+    return True, "Gültige KVNR"
+
+
+def validate_svnr(svnr: str) -> tuple[bool, str]:
+    """
+    Validate Austrian SVNR (Sozialversicherungsnummer).
+    10 digit format with specific structure.
+    """
+    svnr = svnr.replace(" ", "").replace("-", "").strip()
+    if not svnr.isdigit():
+        return False, "SVNR muss nur Ziffern enthalten"
+    if len(svnr) != 10:
+        return False, f"SVNR muss 10 Ziffern haben (hat {len(svnr)})"
+    return True, "Gültige SVNR"
+
+
+def validate_snils(snils: str) -> tuple[bool, str]:
+    """
+    Validate Russian СНИЛС (Страховой номер индивидуального лицевого счета).
+    11 digit number with check digits.
+    """
+    snils = snils.replace(" ", "").replace("-", "").strip()
+    if not snils.isdigit():
+        return False, "СНИЛС должен содержать только цифры"
+    if len(snils) != 11:
+        return False, f"СНИЛС должен иметь 11 цифр (имеет {len(snils)})"
+    return True, "Действительный СНИЛС"
+
+
+def validate_nhs(nhs: str) -> tuple[bool, str]:
+    """
+    Validate UK NHS number.
+    10 digit format.
+    """
+    nhs = nhs.replace(" ", "").replace("-", "").strip()
+    if not nhs.isdigit():
+        return False, "NHS number must contain only digits"
+    if len(nhs) != 10:
+        return False, f"NHS number must have 10 digits (has {len(nhs)})"
+    return True, "Valid NHS number"
+
+
+def validate_nir(nir: str) -> tuple[bool, str]:
+    """
+    Validate French NIR (Numéro d'Inscription au Répertoire / INSEE).
+    15 digit number.
+    """
+    nir = nir.replace(" ", "").strip()
+    if not nir.isdigit():
+        return False, "NIR doit contenir uniquement des chiffres"
+    if len(nir) != 15:
+        return False, f"NIR doit avoir 15 chiffres (a {len(nir)})"
+    return True, "NIR valide"
+
+
+def validate_bsn(bsn: str) -> tuple[bool, str]:
+    """
+    Validate Dutch BSN (Burgerservicenummer).
+    9 digit number with checksum.
+    """
+    bsn = bsn.replace(" ", "").replace("-", "").strip()
+    if not bsn.isdigit():
+        return False, "BSN mag alleen nummers bevatten"
+    if len(bsn) != 9:
+        return False, f"BSN moet 9 cijfers hebben (heeft {len(bsn)})"
+    return True, "Geldig BSN"
+
+
+def validate_phn(phn: str) -> tuple[bool, str]:
+    """
+    Validate Canadian Provincial Health Number.
+    Format varies by province (typically 10-12 chars).
+    """
+    phn = phn.replace(" ", "").replace("-", "").strip().upper()
+    if len(phn) < 10 or len(phn) > 12:
+        return False, f"PHN must be 10-12 characters (has {len(phn)})"
+    if not phn.replace(" ", "").isalnum():
+        return False, "PHN must contain only alphanumeric characters"
+    return True, "Valid PHN"
+
+
+def validate_ssn(ssn: str) -> tuple[bool, str]:
+    """
+    Validate US Social Security Number.
+    Format: XXX-XX-XXXX (9 digits).
+    Note: This is format validation only, not authenticity validation.
+    """
+    ssn = ssn.replace(" ", "").replace("-", "").strip()
+    if not ssn.isdigit():
+        return False, "SSN must contain only digits"
+    if len(ssn) != 9:
+        return False, f"SSN must have 9 digits (has {len(ssn)})"
+    # Basic sanity checks
+    if ssn[:3] == "000" or ssn[3:5] == "00" or ssn[5:] == "0000":
+        return False, "Invalid SSN (invalid segment)"
+    if ssn[:3] == "666":
+        return False, "Invalid SSN (area 666 not assigned)"
+    if int(ssn[:3]) > 772:
+        return False, "Invalid SSN (area number too high)"
+    return True, "Valid SSN format"
+
+
+def validate_health_id(health_id_type: str, health_id: str, country: str = None) -> tuple[bool, str]:
+    """
+    Main validator dispatcher.
+    Returns (is_valid, message)
+    """
+    validators = {
+        "amka":  validate_amka,
+        "kvnr":  validate_kvnr,
+        "svnr":  validate_svnr,
+        "snils": validate_snils,
+        "nhs":   validate_nhs,
+        "nir":   validate_nir,
+        "bsn":   validate_bsn,
+        "phn":   validate_phn,
+        "ssn":   validate_ssn,
+    }
+
+    if health_id_type not in validators:
+        return False, f"Άγνωστος τύπος αναγνώρισης: {health_id_type}"
+
+    return validators[health_id_type](health_id)

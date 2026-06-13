@@ -1,1 +1,328 @@
-from fastapi import APIRouter, Depends, HTTPException, Header\nfrom sqlalchemy.orm import Session\nfrom datetime import datetime, timedelta\nfrom typing import Optional\nimport os\nimport httpx\nimport secrets\nimport hashlib\n\nfrom models import Base, Patient, FeverEvent, HospitalAccess, TempReading, FeverEventOut, HEALTH_ID_TYPES, Hospital\nfrom validators import validate_health_id\n\nrouter = APIRouter(prefix=\"/hospital\", tags=[\"hospital\"])\n\nHOSPITAL_API_KEY = os.getenv(\"HOSPITAL_API_KEY\", \"\")\n\n\ndef _verify_hospital_key(x_hospital_key: str = Header(...), db: Session = Depends(get_db)):\n    \"\"\"Verify hospital API key from header.\"\"\"\n    if not x_hospital_key:\n        raise HTTPException(status_code=403, detail=\"Missing X-Hospital-Key header\")\n    hospital = db.query(Hospital).filter(Hospital.api_key == x_hospital_key, Hospital.is_active == True).first()\n    if not hospital:\n        raise HTTPException(status_code=403, detail=\"Invalid or inactive hospital API key\")\n    return hospital\n\n\ndef get_db():\n    from main import SessionLocal\n    db = SessionLocal()\n    try:\n        yield db\n    finally:\n        db.close()\n\n\ndef _has_access(patient_id: int, hospital_id: int, db: Session) -> bool:\n    return db.query(HospitalAccess).filter(\n        HospitalAccess.patient_id  == patient_id,\n        HospitalAccess.hospital_id == hospital_id,\n        HospitalAccess.is_active   == True,\n    ).first() is not None\n\n\n# ────── HOSPITAL REGISTRATION & MANAGEMENT ──────────────────────────────────\n\n@router.post(\"/register\", response_model=dict)\ndef register_hospital(\n    name: str,\n    country: str,\n    contact_email: str,\n    contact_phone: Optional[str] = None,\n    alert_webhook_url: Optional[str] = None,\n    db: Session = Depends(get_db),\n):\n    \"\"\"\n    Register a new hospital in the Thronos network.\n    Hospital receives a unique API key for authentication.\n    \"\"\"\n    # Check if hospital already registered\n    existing = db.query(Hospital).filter(Hospital.contact_email == contact_email).first()\n    if existing:\n        raise HTTPException(400, \"Hospital with this email already registered\")\n\n    # Generate unique API key\n    api_key = secrets.token_urlsafe(32)\n\n    hospital = Hospital(\n        name=name,\n        country=country,\n        contact_email=contact_email,\n        contact_phone=contact_phone,\n        api_key=api_key,\n        alert_webhook_url=alert_webhook_url,\n    )\n    db.add(hospital)\n    db.commit()\n\n    return {\n        \"id\": hospital.id,\n        \"api_key\": api_key,\n        \"message\": \"Hospital registered. Use this API key in X-Hospital-Key header for all requests.\",\n    }\n\n\n@router.get(\"/{hospital_id}/dashboard\", response_model=dict)\ndef hospital_dashboard(\n    hospital_id: int,\n    hospital: Hospital = Depends(_verify_hospital_key),\n    db: Session = Depends(get_db),\n):\n    \"\"\"Get hospital dashboard with summary of active patients.\"\"\"\n    accesses = db.query(HospitalAccess).filter(\n        HospitalAccess.hospital_id == hospital.id,\n        HospitalAccess.is_active == True,\n    ).all()\n\n    total_patients = len(accesses)\n    recent_readings = db.query(TempReading).filter(\n        TempReading.patient_id.in_([a.patient_id for a in accesses]),\n        TempReading.timestamp >= datetime.utcnow() - timedelta(hours=24),\n    ).count()\n\n    active_fevers = db.query(FeverEvent).filter(\n        FeverEvent.patient_id.in_([a.patient_id for a in accesses]),\n        FeverEvent.end_time == None,\n    ).count()\n\n    return {\n        \"hospital_id\": hospital.id,\n        \"hospital_name\": hospital.name,\n        \"total_patients_with_access\": total_patients,\n        \"readings_last_24h\": recent_readings,\n        \"active_fever_events\": active_fevers,\n    }\n\n\n# ────── PATIENT ACCESS ──────────────────────────────────────────────────────\n\n@router.post(\"/patients/{patient_id}/access\")\ndef grant_access(\n    patient_id:            int,\n    guardian_confirmation: bool,\n    emr_push_url:          Optional[str] = None,\n    hospital: Hospital = Depends(_verify_hospital_key),\n    db: Session = Depends(get_db),\n):\n    \"\"\"Grant hospital access to a patient (requires guardian confirmation).\"\"\"\n    if not guardian_confirmation:\n        raise HTTPException(400, \"Guardian must confirm access\")\n\n    patient = db.query(Patient).filter(Patient.id == patient_id).first()\n    if not patient:\n        raise HTTPException(404, \"Patient not found\")\n\n    # Check if access already exists\n    row = db.query(HospitalAccess).filter(\n        HospitalAccess.patient_id == patient_id,\n        HospitalAccess.hospital_id == hospital.id,\n    ).first()\n\n    if row:\n        row.is_active = True\n        row.revoked_at = None\n        row.emr_push_url = emr_push_url\n    else:\n        db.add(HospitalAccess(\n            patient_id = patient_id,\n            hospital_id = hospital.id,\n            emr_push_url = emr_push_url,\n        ))\n\n    db.commit()\n    return {\n        \"status\": \"access_granted\",\n        \"patient_id\": patient_id,\n        \"hospital_id\": hospital.id,\n        \"hospital_name\": hospital.name,\n    }\n\n\n@router.delete(\"/patients/{patient_id}/access\")\ndef revoke_access(\n    patient_id: int,\n    hospital: Hospital = Depends(_verify_hospital_key),\n    db: Session = Depends(get_db),\n):\n    \"\"\"Revoke hospital access to a patient.\"\"\"\n    row = db.query(HospitalAccess).filter(\n        HospitalAccess.patient_id == patient_id,\n        HospitalAccess.hospital_id == hospital.id,\n        HospitalAccess.is_active == True,\n    ).first()\n    if not row:\n        raise HTTPException(404, \"No active access found\")\n    row.is_active = False\n    row.revoked_at = datetime.utcnow()\n    db.commit()\n    return {\"status\": \"access_revoked\", \"patient_id\": patient_id}\n\n\n@router.get(\"/patients/lookup\")\ndef lookup_by_health_id(\n    health_id_type: str,\n    health_id: str,\n    hospital: Hospital = Depends(_verify_hospital_key),\n    db: Session = Depends(get_db),\n):\n    \"\"\"\n    Look up a patient by their national health ID (e.g. AMKA, KVNR, NHS number).\n    Returns patient summary if the hospital has been granted access.\n\n    Supported types: amka (GR), kvnr (DE), svnr (AT), snils (RU),\n                     nhs (UK), nir (FR), bsn (NL), phn (CA), ssn (US)\n    \"\"\"\n    if health_id_type not in HEALTH_ID_TYPES:\n        raise HTTPException(400, f\"Unknown health_id_type. Supported: {list(HEALTH_ID_TYPES.keys())}\")\n\n    # Validate the format first\n    is_valid, msg = validate_health_id(health_id_type, health_id)\n    if not is_valid:\n        raise HTTPException(400, f\"Invalid {health_id_type}: {msg}\")\n\n    patient = db.query(Patient).filter(\n        Patient.national_health_id_type == health_id_type,\n        Patient.national_health_id      == health_id,\n    ).first()\n\n    if not patient:\n        raise HTTPException(404, \"No patient found with this health ID\")\n\n    if not _has_access(patient.id, hospital.id, db):\n        raise HTTPException(403, \"Hospital does not have access to this patient. \"\n                                 \"Guardian must grant access first via POST /hospital/patients/{id}/access\")\n\n    last_reading = (\n        db.query(TempReading)\n        .filter(TempReading.patient_id == patient.id)\n        .order_by(TempReading.timestamp.desc())\n        .first()\n    )\n    total_fever_events = db.query(FeverEvent).filter(FeverEvent.patient_id == patient.id).count()\n\n    return {\n        \"patient_id\":          patient.id,\n        \"name\":                patient.name,\n        \"birth_date\":          patient.birth_date.isoformat() if patient.birth_date else None,\n        \"national_health_id\":  patient.national_health_id,\n        \"health_id_type\":      patient.national_health_id_type,\n        \"health_id_label\":     HEALTH_ID_TYPES[health_id_type][\"label\"],\n        \"country\":             patient.country,\n        \"total_fever_events\":  total_fever_events,\n        \"last_reading\": {\n            \"temperature\": last_reading.temperature,\n            \"spo2\":        last_reading.spo2,\n            \"bpm\":         last_reading.bpm,\n            \"timestamp\":   last_reading.timestamp.isoformat(),\n        } if last_reading else None,\n    }\n\n\n@router.post(\"/patients/{patient_id}/push-to-emr\")\nasync def push_to_emr(\n    patient_id: int,\n    hospital: Hospital = Depends(_verify_hospital_key),\n    db: Session = Depends(get_db),\n):\n    \"\"\"\n    Push the patient's latest vitals and fever summary to the hospital's EMR endpoint.\n    The hospital must have set emr_push_url when calling grant_access.\n    Supports any hospital system worldwide (Greek AMKA registries, German ePA, UK NHS Spine, etc.)\n    \"\"\"\n    if not _has_access(patient_id, hospital.id, db):\n        raise HTTPException(403, \"No access to this patient\")\n\n    row = db.query(HospitalAccess).filter(\n        HospitalAccess.patient_id == patient_id,\n        HospitalAccess.hospital_id == hospital.id,\n        HospitalAccess.is_active == True,\n    ).first()\n\n    if not row or not row.emr_push_url:\n        raise HTTPException(400, \"No EMR push URL configured for this hospital. \"\n                                 \"Set emr_push_url when calling grant_access.\")\n\n    patient = db.query(Patient).filter(Patient.id == patient_id).first()\n    if not patient:\n        raise HTTPException(404, \"Patient not found\")\n\n    last_reading = (\n        db.query(TempReading)\n        .filter(TempReading.patient_id == patient.id)\n        .order_by(TempReading.timestamp.desc())\n        .first()\n    )\n    recent_fevers = (\n        db.query(FeverEvent)\n        .filter(FeverEvent.patient_id == patient.id)\n        .order_by(FeverEvent.start_time.desc())\n        .limit(5)\n        .all()\n    )\n\n    payload = {\n        \"source\":             \"ThronomedICE\",\n        \"patient_id\":         patient.id,\n        \"national_health_id\": patient.national_health_id,\n        \"health_id_type\":     patient.national_health_id_type,\n        \"name\":               patient.name,\n        \"birth_date\":         patient.birth_date.isoformat() if patient.birth_date else None,\n        \"country\":            patient.country,\n        \"pushed_at\":          datetime.utcnow().isoformat(),\n        \"latest_vitals\": {\n            \"temperature\": last_reading.temperature,\n            \"spo2\":        last_reading.spo2,\n            \"bpm\":         last_reading.bpm,\n            \"systolic\":    last_reading.systolic,\n            \"diastolic\":   last_reading.diastolic,\n            \"timestamp\":   last_reading.timestamp.isoformat(),\n        } if last_reading else None,\n        \"recent_fever_events\": [\n            {\n                \"start_time\":   e.start_time.isoformat(),\n                \"end_time\":     e.end_time.isoformat() if e.end_time else None,\n                \"peak_temp\":    e.peak_temp,\n                \"min_spo2\":     e.min_spo2,\n                \"avg_bpm\":      e.avg_bpm,\n                \"blockchain_tx\": e.blockchain_tx,\n            }\n            for e in recent_fevers\n        ],\n    }\n\n    try:\n        async with httpx.AsyncClient(timeout=10.0) as client:\n            resp = await client.post(row.emr_push_url, json=payload)\n            resp.raise_for_status()\n        return {\"status\": \"pushed\", \"hospital_id\": hospital.id, \"emr_status\": resp.status_code}\n    except httpx.HTTPError as e:\n        raise HTTPException(502, f\"EMR push failed: {e}\")\n\n\n@router.get(\"/health-id-types\")\ndef list_health_id_types():\n    \"\"\"Return all supported national health ID types with labels.\"\"\"\n    return {\"types\": [\n        {\"type\": k, **v} for k, v in HEALTH_ID_TYPES.items()\n    ]}\n
+from fastapi import APIRouter, Depends, HTTPException, Header
+from sqlalchemy.orm import Session
+from datetime import datetime, timedelta
+from typing import Optional
+import os
+import httpx
+import secrets
+import hashlib
+
+from models import Base, Patient, FeverEvent, HospitalAccess, TempReading, FeverEventOut, HEALTH_ID_TYPES, Hospital
+from validators import validate_health_id
+
+router = APIRouter(prefix="/hospital", tags=["hospital"])
+
+HOSPITAL_API_KEY = os.getenv("HOSPITAL_API_KEY", "")
+
+
+def _verify_hospital_key(x_hospital_key: str = Header(...), db: Session = Depends(get_db)):
+    """Verify hospital API key from header."""
+    if not x_hospital_key:
+        raise HTTPException(status_code=403, detail="Missing X-Hospital-Key header")
+    hospital = db.query(Hospital).filter(Hospital.api_key == x_hospital_key, Hospital.is_active == True).first()
+    if not hospital:
+        raise HTTPException(status_code=403, detail="Invalid or inactive hospital API key")
+    return hospital
+
+
+def get_db():
+    from main import SessionLocal
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def _has_access(patient_id: int, hospital_id: int, db: Session) -> bool:
+    return db.query(HospitalAccess).filter(
+        HospitalAccess.patient_id  == patient_id,
+        HospitalAccess.hospital_id == hospital_id,
+        HospitalAccess.is_active   == True,
+    ).first() is not None
+
+
+# ────── HOSPITAL REGISTRATION & MANAGEMENT ──────────────────────────────────
+
+@router.post("/register", response_model=dict)
+def register_hospital(
+    name: str,
+    country: str,
+    contact_email: str,
+    contact_phone: Optional[str] = None,
+    alert_webhook_url: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Register a new hospital in the Thronos network.
+    Hospital receives a unique API key for authentication.
+    """
+    # Check if hospital already registered
+    existing = db.query(Hospital).filter(Hospital.contact_email == contact_email).first()
+    if existing:
+        raise HTTPException(400, "Hospital with this email already registered")
+
+    # Generate unique API key
+    api_key = secrets.token_urlsafe(32)
+
+    hospital = Hospital(
+        name=name,
+        country=country,
+        contact_email=contact_email,
+        contact_phone=contact_phone,
+        api_key=api_key,
+        alert_webhook_url=alert_webhook_url,
+    )
+    db.add(hospital)
+    db.commit()
+
+    return {
+        "id": hospital.id,
+        "api_key": api_key,
+        "message": "Hospital registered. Use this API key in X-Hospital-Key header for all requests.",
+    }
+
+
+@router.get("/{hospital_id}/dashboard", response_model=dict)
+def hospital_dashboard(
+    hospital_id: int,
+    hospital: Hospital = Depends(_verify_hospital_key),
+    db: Session = Depends(get_db),
+):
+    """Get hospital dashboard with summary of active patients."""
+    accesses = db.query(HospitalAccess).filter(
+        HospitalAccess.hospital_id == hospital.id,
+        HospitalAccess.is_active == True,
+    ).all()
+
+    total_patients = len(accesses)
+    recent_readings = db.query(TempReading).filter(
+        TempReading.patient_id.in_([a.patient_id for a in accesses]),
+        TempReading.timestamp >= datetime.utcnow() - timedelta(hours=24),
+    ).count()
+
+    active_fevers = db.query(FeverEvent).filter(
+        FeverEvent.patient_id.in_([a.patient_id for a in accesses]),
+        FeverEvent.end_time == None,
+    ).count()
+
+    return {
+        "hospital_id": hospital.id,
+        "hospital_name": hospital.name,
+        "total_patients_with_access": total_patients,
+        "readings_last_24h": recent_readings,
+        "active_fever_events": active_fevers,
+    }
+
+
+# ────── PATIENT ACCESS ──────────────────────────────────────────────────────
+
+@router.post("/patients/{patient_id}/access")
+def grant_access(
+    patient_id:            int,
+    guardian_confirmation: bool,
+    emr_push_url:          Optional[str] = None,
+    hospital: Hospital = Depends(_verify_hospital_key),
+    db: Session = Depends(get_db),
+):
+    """Grant hospital access to a patient (requires guardian confirmation)."""
+    if not guardian_confirmation:
+        raise HTTPException(400, "Guardian must confirm access")
+
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(404, "Patient not found")
+
+    # Check if access already exists
+    row = db.query(HospitalAccess).filter(
+        HospitalAccess.patient_id == patient_id,
+        HospitalAccess.hospital_id == hospital.id,
+    ).first()
+
+    if row:
+        row.is_active = True
+        row.revoked_at = None
+        row.emr_push_url = emr_push_url
+    else:
+        db.add(HospitalAccess(
+            patient_id = patient_id,
+            hospital_id = hospital.id,
+            emr_push_url = emr_push_url,
+        ))
+
+    db.commit()
+    return {
+        "status": "access_granted",
+        "patient_id": patient_id,
+        "hospital_id": hospital.id,
+        "hospital_name": hospital.name,
+    }
+
+
+@router.delete("/patients/{patient_id}/access")
+def revoke_access(
+    patient_id: int,
+    hospital: Hospital = Depends(_verify_hospital_key),
+    db: Session = Depends(get_db),
+):
+    """Revoke hospital access to a patient."""
+    row = db.query(HospitalAccess).filter(
+        HospitalAccess.patient_id == patient_id,
+        HospitalAccess.hospital_id == hospital.id,
+        HospitalAccess.is_active == True,
+    ).first()
+    if not row:
+        raise HTTPException(404, "No active access found")
+    row.is_active = False
+    row.revoked_at = datetime.utcnow()
+    db.commit()
+    return {"status": "access_revoked", "patient_id": patient_id}
+
+
+@router.get("/patients/lookup")
+def lookup_by_health_id(
+    health_id_type: str,
+    health_id: str,
+    hospital: Hospital = Depends(_verify_hospital_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Look up a patient by their national health ID (e.g. AMKA, KVNR, NHS number).
+    Returns patient summary if the hospital has been granted access.
+
+    Supported types: amka (GR), kvnr (DE), svnr (AT), snils (RU),
+                     nhs (UK), nir (FR), bsn (NL), phn (CA), ssn (US)
+    """
+    if health_id_type not in HEALTH_ID_TYPES:
+        raise HTTPException(400, f"Unknown health_id_type. Supported: {list(HEALTH_ID_TYPES.keys())}")
+
+    # Validate the format first
+    is_valid, msg = validate_health_id(health_id_type, health_id)
+    if not is_valid:
+        raise HTTPException(400, f"Invalid {health_id_type}: {msg}")
+
+    patient = db.query(Patient).filter(
+        Patient.national_health_id_type == health_id_type,
+        Patient.national_health_id      == health_id,
+    ).first()
+
+    if not patient:
+        raise HTTPException(404, "No patient found with this health ID")
+
+    if not _has_access(patient.id, hospital.id, db):
+        raise HTTPException(403, "Hospital does not have access to this patient. "
+                                 "Guardian must grant access first via POST /hospital/patients/{id}/access")
+
+    last_reading = (
+        db.query(TempReading)
+        .filter(TempReading.patient_id == patient.id)
+        .order_by(TempReading.timestamp.desc())
+        .first()
+    )
+    total_fever_events = db.query(FeverEvent).filter(FeverEvent.patient_id == patient.id).count()
+
+    return {
+        "patient_id":          patient.id,
+        "name":                patient.name,
+        "birth_date":          patient.birth_date.isoformat() if patient.birth_date else None,
+        "national_health_id":  patient.national_health_id,
+        "health_id_type":      patient.national_health_id_type,
+        "health_id_label":     HEALTH_ID_TYPES[health_id_type]["label"],
+        "country":             patient.country,
+        "total_fever_events":  total_fever_events,
+        "last_reading": {
+            "temperature": last_reading.temperature,
+            "spo2":        last_reading.spo2,
+            "bpm":         last_reading.bpm,
+            "timestamp":   last_reading.timestamp.isoformat(),
+        } if last_reading else None,
+    }
+
+
+@router.post("/patients/{patient_id}/push-to-emr")
+async def push_to_emr(
+    patient_id: int,
+    hospital: Hospital = Depends(_verify_hospital_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Push the patient's latest vitals and fever summary to the hospital's EMR endpoint.
+    The hospital must have set emr_push_url when calling grant_access.
+    Supports any hospital system worldwide (Greek AMKA registries, German ePA, UK NHS Spine, etc.)
+    """
+    if not _has_access(patient_id, hospital.id, db):
+        raise HTTPException(403, "No access to this patient")
+
+    row = db.query(HospitalAccess).filter(
+        HospitalAccess.patient_id == patient_id,
+        HospitalAccess.hospital_id == hospital.id,
+        HospitalAccess.is_active == True,
+    ).first()
+
+    if not row or not row.emr_push_url:
+        raise HTTPException(400, "No EMR push URL configured for this hospital. "
+                                 "Set emr_push_url when calling grant_access.")
+
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(404, "Patient not found")
+
+    last_reading = (
+        db.query(TempReading)
+        .filter(TempReading.patient_id == patient.id)
+        .order_by(TempReading.timestamp.desc())
+        .first()
+    )
+    recent_fevers = (
+        db.query(FeverEvent)
+        .filter(FeverEvent.patient_id == patient.id)
+        .order_by(FeverEvent.start_time.desc())
+        .limit(5)
+        .all()
+    )
+
+    payload = {
+        "source":             "ThronomedICE",
+        "patient_id":         patient.id,
+        "national_health_id": patient.national_health_id,
+        "health_id_type":     patient.national_health_id_type,
+        "name":               patient.name,
+        "birth_date":         patient.birth_date.isoformat() if patient.birth_date else None,
+        "country":            patient.country,
+        "pushed_at":          datetime.utcnow().isoformat(),
+        "latest_vitals": {
+            "temperature": last_reading.temperature,
+            "spo2":        last_reading.spo2,
+            "bpm":         last_reading.bpm,
+            "systolic":    last_reading.systolic,
+            "diastolic":   last_reading.diastolic,
+            "timestamp":   last_reading.timestamp.isoformat(),
+        } if last_reading else None,
+        "recent_fever_events": [
+            {
+                "start_time":   e.start_time.isoformat(),
+                "end_time":     e.end_time.isoformat() if e.end_time else None,
+                "peak_temp":    e.peak_temp,
+                "min_spo2":     e.min_spo2,
+                "avg_bpm":      e.avg_bpm,
+                "blockchain_tx": e.blockchain_tx,
+            }
+            for e in recent_fevers
+        ],
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(row.emr_push_url, json=payload)
+            resp.raise_for_status()
+        return {"status": "pushed", "hospital_id": hospital.id, "emr_status": resp.status_code}
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"EMR push failed: {e}")
+
+
+@router.get("/health-id-types")
+def list_health_id_types():
+    """Return all supported national health ID types with labels."""
+    return {"types": [
+        {"type": k, **v} for k, v in HEALTH_ID_TYPES.items()
+    ]}
