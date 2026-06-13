@@ -5,13 +5,14 @@ import { Buffer } from "buffer";
 import axios from "axios";
 import { APIContext } from "./APIContext";
 import { connectThermoDOC } from "../services/thermodoc";
+import { connectGenialT31 } from "../services/genial-t31";
 
 const TEMP_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 const TEMP_CHAR_UUID    = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 const VITAL_CHAR_UUID   = "beb5483e-36e1-4688-b7f5-ea07361b26aa";
 const PROV_CHAR_UUID    = "beb5483e-36e1-4688-b7f5-ea07361b26ab";
 
-export type DeviceType = "ThronomedICE" | "ThermoDOC";
+export type DeviceType = "ThronomedICE" | "ThermoDOC" | "GenialT31";
 export type BLEState = "idle" | "scanning" | "connecting" | "paired" | "provisioning" | "syncing" | "error";
 
 export const BLEContext = createContext<any>({});
@@ -40,7 +41,7 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
 
   const connectThronomedICE = () => {
     manager.startDeviceScan(null, { allowDuplicates: false }, async (err, device) => {
-      if (err || !device) { setBleState("error"); return; }
+      if (err || !device) { setScanning(false); return; }
       if (device.name !== "ThronomedICE") return;
 
       manager.stopDeviceScan();
@@ -48,7 +49,8 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
         const d = await device.connect();
         await d.discoverAllServicesAndCharacteristics();
         deviceRef.current = d;
-        setBleState("paired");
+        setConnected(true);
+        setScanning(false);
 
         d.monitorCharacteristicForService(TEMP_SERVICE_UUID, TEMP_CHAR_UUID, (e, char) => {
           if (e || !char?.value) return;
@@ -68,7 +70,20 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
             setDiastolic(dia);
             setBpValid(true);
           }
-          addPendingReading({ temperature: temp, device_id: "thnm", spo2: s2, bpm: hr });
+
+          if (patient?.id) {
+            postReading({
+              patient_id:  String(patient.id),
+              temperature: temp,
+              spo2:        s2 > 0  ? s2  : undefined,
+              bpm:         hr > 0  ? hr  : undefined,
+              systolic:    bpOk && sys > 0 ? sys : undefined,
+              diastolic:   bpOk && dia > 0 ? dia : undefined,
+              spo2_valid:  s2 > 0 && !!json.spo2_valid,
+              bpm_valid:   hr > 0 && !!json.bpm_valid,
+              bp_valid:    bpOk && sys > 0 && dia > 0,
+            });
+          }
         });
 
         d.monitorCharacteristicForService(TEMP_SERVICE_UUID, VITAL_CHAR_UUID, (e, char) => {
@@ -77,9 +92,9 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
           if (json.spo2 > 0) setSpo2(json.spo2);
           if (json.bpm  > 0) setBpm(json.bpm);
         });
-      } catch { setBleState("error"); }
+      } catch { setScanning(false); }
     });
-    setTimeout(() => { manager.stopDeviceScan(); }, 15000);
+    setTimeout(() => { manager.stopDeviceScan(); setScanning(false); }, 15000);
   };
 
   const syncBufferedReadings = async () => {
@@ -112,7 +127,18 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
         manager,
         (tempC) => {
           setTemperature(tempC);
-          addPendingReading({ temperature: tempC, device_id: "thermodoc" });
+          addPendingReading({ temperature: tempC, device_id: "thermadoc" });
+        },
+        (d) => { deviceRef.current = d; setBleState("paired"); },
+        ()  => { deviceRef.current = null; setBleState("idle"); },
+        ()  => setBleState("error"),
+      );
+    } else if (deviceType === "GenialT31") {
+      await connectGenialT31(
+        manager,
+        (tempC) => {
+          setTemperature(tempC);
+          addPendingReading({ temperature: tempC, device_id: "genial-t31" });
         },
         (d) => { deviceRef.current = d; setBleState("paired"); },
         ()  => { deviceRef.current = null; setBleState("idle"); },
