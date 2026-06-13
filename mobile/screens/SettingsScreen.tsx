@@ -19,6 +19,18 @@ const HEALTH_ID_TYPES = {
   "ssn":   "SSN (ΗΠΑ)",
 };
 
+const HEALTH_ID_TYPES = {
+  "amka":  "ΑΜΚΑ (Ελλάδα)",
+  "kvnr":  "KVNR (Γερμανία)",
+  "svnr":  "SVNR (Αυστρία)",
+  "snils": "СНИЛС (Ρωσία)",
+  "nhs":   "NHS (UK)",
+  "nir":   "NIR (Γαλλία)",
+  "bsn":   "BSN (Ολλανδία)",
+  "phn":   "PHN (Καναδά)",
+  "ssn":   "SSN (ΗΠΑ)",
+};
+
 export default function SettingsScreen() {
   const {
     apiUrl, setApiUrl,
@@ -27,7 +39,7 @@ export default function SettingsScreen() {
     setActivePatient, updatePatient,
     lastBpLevel,
   } = useContext(APIContext);
-  const { connected, scanning, connect, disconnect, provision } = useContext(BLEContext);
+  const { connected, scanning, connect, disconnect, provision, deviceType, setDeviceType } = useContext(BLEContext);
 
   const [inputUrl, setInputUrl] = useState(apiUrl);
   const [regGuardianName,  setRegGuardianName]  = useState("");
@@ -41,11 +53,20 @@ export default function SettingsScreen() {
   const [provPass,    setProvPass]    = useState("");
   const [provisioning, setProvisioning] = useState(false);
 
+  // ─ Multi-child management
+  const [addingChild,    setAddingChild]    = useState(false);
+  const [newChildName,   setNewChildName]   = useState("");
+  const [newChildDob,    setNewChildDob]    = useState("");
+  const [newChildSub,    setNewChildSub]    = useState<"basic" | "bp">("basic");
+
+  // ─ Health ID management
   const [healthIdModal,  setHealthIdModal]  = useState(false);
   const [healthIdType,   setHealthIdType]   = useState<string>("amka");
   const [healthIdValue,  setHealthIdValue]  = useState("");
   const [healthIdValid,  setHealthIdValid]  = useState<boolean | null>(null);
   const [healthIdMsg,    setHealthIdMsg]    = useState("");
+
+  // ── Handlers ────────────────────────────────────────────────────────────
 
   const saveApiUrl = () => {
     setApiUrl(inputUrl.trim());
@@ -84,6 +105,35 @@ export default function SettingsScreen() {
     } catch (e: any) {
       Alert.alert("Σφάλμα", e?.message ?? "Αποτυχία αποστολής.");
     } finally { setProvisioning(false); }
+  };
+
+  const addChild = async () => {
+    if (!newChildName) { Alert.alert("Σφάλμα", "Εισάγετε όνομα παιδιού."); return; }
+    if (!guardian?.id) { Alert.alert("Σφάλμα", "Δεν έχει σαθεί κηδεμόνας."); return; }
+    setAddingChild(true);
+    try {
+      const freeUntil = new Date();
+      freeUntil.setMonth(freeUntil.getMonth() + 5);
+      await createPatient({
+        name: newChildName.trim(),
+        birth_date: newChildDob || undefined,
+        guardian_id: guardian.id,
+        subscription: newChildSub,
+        free_until: freeUntil.toISOString(),
+      });
+      setNewChildName("");
+      setNewChildDob("");
+      setNewChildSub("basic");
+      Alert.alert("✅ Επιτυχία", "Το παιδί προστέθηκε.");
+    } catch (e: any) {
+      Alert.alert("Σφάλμα", e?.message ?? "Αποτυχία προσθήκης παιδιού.");
+    } finally { setAddingChild(false); }
+  };
+
+  const switchPatient = async (patientId: number) => {
+    if (guardian?.id) {
+      await setActivePatient(guardian.id, patientId);
+    }
   };
 
   const validateHealthId = async (type: string, value: string) => {
@@ -133,57 +183,7 @@ export default function SettingsScreen() {
     }
   };
 
-  const switchPatient = async (patientId: number) => {
-    if (guardian?.id) {
-      await setActivePatient(guardian.id, patientId);
-    }
-  };
-
-  function Section({ title, children }: { title: string; children: React.ReactNode }) {
-    return (
-      <View style={s.section}>
-        <Text style={s.sectionTitle}>{title}</Text>
-        {children}
-      </View>
-    );
-  }
-
-  function Field({ label, children }: { label: string; children: React.ReactNode }) {
-    return (
-      <View style={s.field}>
-        <Text style={s.fieldLabel}>{label}</Text>
-        {children}
-      </View>
-    );
-  }
-
-  function Btn({
-    label, onPress, disabled = false, variant = "primary", loading = false,
-  }: {
-    label: string; onPress: () => void;
-    disabled?: boolean; variant?: "primary" | "secondary" | "danger";
-    loading?: boolean;
-  }) {
-    const bg = variant === "danger" ? "#C0392B" : variant === "secondary" ? "#7F8C8D" : "#2C3E50";
-    return (
-      <TouchableOpacity
-        style={[s.btn, { backgroundColor: bg }, disabled && s.btnDisabled]}
-        onPress={onPress} disabled={disabled || loading}>
-        {loading
-          ? <ActivityIndicator color="#fff" size="small" />
-          : <Text style={s.btnText}>{label}</Text>}
-      </TouchableOpacity>
-    );
-  }
-
-  function InfoRow({ label, value }: { label: string; value: string }) {
-    return (
-      <View style={s.infoRow}>
-        <Text style={s.infoLabel}>{label}</Text>
-        <Text style={s.infoValue}>{value}</Text>
-      </View>
-    );
-  }
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <KeyboardAvoidingView
@@ -248,6 +248,17 @@ export default function SettingsScreen() {
                     {p.id === patient.id && <Text style={s.childCheckmark}>✓</Text>}
                   </TouchableOpacity>
                 ))}
+                <Btn label="+ Προσθήκη Παιδιού" onPress={() => Alert.alert("Νέο Παιδί",
+                  "Συμπληρώστε τα στοιχεία του νέου παιδιού",
+                  [
+                    { text: "Ακύρωση", onPress: () => {} },
+                    { text: "Συνέχεια", onPress: () => {
+                      // Show add child form (simplified inline)
+                      Alert.prompt("Όνομα Παιδιού", "", (name) => {
+                        if (name) setNewChildName(name);
+                      });
+                    }},
+                  ])} />
               </Section>
             )}
           </>
@@ -300,11 +311,24 @@ export default function SettingsScreen() {
         )}
 
         <Section title="📡 Ρύθμιση Συσκευής">
+          <Field label="Τύπος Συσκευής">
+            <TouchableOpacity style={s.pickerBtn} onPress={() =>
+              Alert.alert("Τύπος Συσκευής", "", [
+                { text: "ThronomedICE", onPress: () => setDeviceType("ThronomedICE") },
+                { text: "ThermoDOC", onPress: () => setDeviceType("ThermoDOC") },
+                { text: "Genial T31", onPress: () => setDeviceType("GenialT31") },
+              ])}>
+              <Text style={s.pickerBtnText}>
+                {deviceType === "GenialT31" ? "Genial T31" : deviceType}
+              </Text>
+            </TouchableOpacity>
+          </Field>
+
           <View style={s.bleStatus}>
             <View style={[s.bleDot, { backgroundColor: connected ? "#27AE60" : "#E74C3C" }]} />
             <Text style={s.bleStatusText}>
               {scanning ? "Σάρωση..."
-               : connected ? "Συνδεδεμένο ThronomedICE"
+               : connected ? `Συνδεδεμένο ${deviceType === "GenialT31" ? "Genial T31" : deviceType}`
                : "Μη συνδεδεμένο"}
             </Text>
           </View>
@@ -409,6 +433,71 @@ export default function SettingsScreen() {
         </Modal>
 
       </ScrollView>
+
+      {/* ── Health ID Modal ──────────────────────────────────────── */}
+      <Modal visible={healthIdModal} transparent animationType="slide">
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <View style={s.modalOverlay}>
+            <View style={s.modalContent}>
+              <Text style={s.modalTitle}>📋 Εθνική Αναγνώρηση</Text>
+
+              <Field label="Τύπος Αναγνώρισης">
+                <TouchableOpacity style={s.pickerBtn} onPress={() =>
+                  Alert.alert("Τύπος Αναγνώρισης", "",
+                    Object.entries(HEALTH_ID_TYPES).map(([key, label]) => ({
+                      text: label,
+                      onPress: () => setHealthIdType(key),
+                    }))
+                  )}>
+                  <Text style={s.pickerBtnText}>{HEALTH_ID_TYPES[healthIdType as keyof typeof HEALTH_ID_TYPES]}</Text>
+                </TouchableOpacity>
+              </Field>
+
+              <Field label="Αριθμός Αναγνώρισης">
+                <TextInput
+                  style={s.input}
+                  value={healthIdValue}
+                  onChangeText={(v) => {
+                    setHealthIdValue(v);
+                    setHealthIdValid(null);
+                  }}
+                  placeholder="Εισάγετε αριθμό"
+                  autoCapitalize="none"
+                />
+              </Field>
+
+              <Btn
+                label="Έλεγχος"
+                onPress={() => validateHealthId(healthIdType, healthIdValue)}
+              />
+
+              {healthIdValid !== null && (
+                <View style={[s.validationResult, healthIdValid ? s.validationOk : s.validationErr]}>
+                  <Text style={s.validationText}>{healthIdMsg}</Text>
+                </View>
+              )}
+
+              <View style={s.modalBtnRow}>
+                <Btn
+                  label="Ακύρωση"
+                  onPress={() => {
+                    setHealthIdModal(false);
+                    setHealthIdValue("");
+                    setHealthIdValid(null);
+                  }}
+                  variant="secondary"
+                />
+                <Btn
+                  label="Αποθήκευση"
+                  onPress={saveHealthId}
+                  disabled={!healthIdValid}
+                />
+              </View>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
     </KeyboardAvoidingView>
   );
 }

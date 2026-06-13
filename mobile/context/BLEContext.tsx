@@ -5,13 +5,14 @@ import { Buffer } from "buffer";
 import axios from "axios";
 import { APIContext } from "./APIContext";
 import { connectThermoDOC } from "../services/thermodoc";
+import { connectGenialT31 } from "../services/genial-t31";
 
 const TEMP_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 const TEMP_CHAR_UUID    = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 const VITAL_CHAR_UUID   = "beb5483e-36e1-4688-b7f5-ea07361b26aa";
 const PROV_CHAR_UUID    = "beb5483e-36e1-4688-b7f5-ea07361b26ab";
 
-export type DeviceType = "ThronomedICE" | "ThermoDOC";
+export type DeviceType = "ThronomedICE" | "ThermoDOC" | "GenialT31";
 export type BLEState = "idle" | "scanning" | "connecting" | "paired" | "provisioning" | "syncing" | "error";
 
 export const BLEContext = createContext<any>({});
@@ -105,6 +106,29 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const syncBufferedReadings = async () => {
+    if (pendingReadings.length === 0) return;
+    try {
+      setBleState("syncing");
+      const res = await axios.post(`${apiUrl}/readings/bulk`, pendingReadings);
+      if (res.data.processed > 0) {
+        setLastSyncTime(new Date());
+        setPendingReadings([]);
+      }
+      setBleState("paired");
+    } catch (e) {
+      console.warn("Sync failed:", e);
+      setBleState("paired");
+    }
+  };
+
+  const addPendingReading = (reading: any) => {
+    setPendingReadings(prev => [...prev, reading]);
+    if (patient?.id && reading.temperature) {
+      postReading({ patient_id: String(patient.id), temperature: reading.temperature });
+    }
+  };
+
   const connect = async () => {
     setBleState("scanning");
     if (deviceType === "ThermoDOC") {
@@ -112,7 +136,18 @@ export function BLEProvider({ children }: { children: React.ReactNode }) {
         manager,
         (tempC) => {
           setTemperature(tempC);
-          addPendingReading({ temperature: tempC, device_id: "thermodoc" });
+          addPendingReading({ temperature: tempC, device_id: "thermadoc" });
+        },
+        (d) => { deviceRef.current = d; setBleState("paired"); },
+        ()  => { deviceRef.current = null; setBleState("idle"); },
+        ()  => setBleState("error"),
+      );
+    } else if (deviceType === "GenialT31") {
+      await connectGenialT31(
+        manager,
+        (tempC) => {
+          setTemperature(tempC);
+          addPendingReading({ temperature: tempC, device_id: "genial-t31" });
         },
         (d) => { deviceRef.current = d; setBleState("paired"); },
         ()  => { deviceRef.current = null; setBleState("idle"); },
