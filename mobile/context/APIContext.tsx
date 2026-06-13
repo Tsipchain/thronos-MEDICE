@@ -7,6 +7,7 @@ export const APIContext = createContext<any>({});
 export function APIProvider({ children }: { children: React.ReactNode }) {
   const [apiUrl,       setApiUrlState] = useState("https://medice.thronos.io");
   const [guardian,     setGuardian]    = useState<any>(null);
+  const [patients,     setPatients]    = useState<any[]>([]);
   const [patient,      setPatient]     = useState<any>(null);
   const [feverHistory, setFeverHistory] = useState<any[]>([]);
   const [lastBpLevel,  setLastBpLevel] = useState<string>("normal");
@@ -23,6 +24,7 @@ export function APIProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => { if (patient?.id) fetchFeverHistory(patient.id); }, [patient]);
+  useEffect(() => { if (guardian?.id) fetchPatients(guardian.id); }, [guardian]);
 
   const setApiUrl = async (url: string) => {
     setApiUrlState(url);
@@ -87,13 +89,41 @@ export function APIProvider({ children }: { children: React.ReactNode }) {
     } catch (e) { console.warn("feverHistory:", e); }
   };
 
+  const fetchPatients = async (guardianId: number) => {
+    try {
+      const res = await axios.get(`${apiUrl}/guardians/${guardianId}/patients`);
+      setPatients(res.data);
+    } catch (e) { console.warn("fetchPatients:", e); }
+  };
+
+  const setActivePatient = async (guardianId: number, patientId: number) => {
+    try {
+      await axios.put(`${apiUrl}/guardians/${guardianId}/active-patient`, { patient_id: patientId });
+      const p = patients.find((x) => x.id === patientId);
+      if (p) {
+        setPatient(p);
+        await AsyncStorage.setItem("medice_patient", JSON.stringify(p));
+      }
+    } catch (e) { console.warn("setActivePatient:", e); }
+  };
+
+  const updatePatient = async (patientId: number, updates: any) => {
+    try {
+      await axios.put(`${apiUrl}/patients/${patientId}`, updates);
+      const updated = { ...patient, ...updates };
+      setPatient(updated);
+      await AsyncStorage.setItem("medice_patient", JSON.stringify(updated));
+    } catch (e) { console.warn("updatePatient:", e); throw e; }
+  };
+
   return (
     <APIContext.Provider value={{
       apiUrl, setApiUrl,
-      guardian, patient,
+      guardian, patient, patients,
       feverHistory, lastBpLevel,
       createGuardian, createPatient,
       postReading, postAntipyretic,
+      fetchPatients, setActivePatient, updatePatient,
     }}>
       {children}
     </APIContext.Provider>
